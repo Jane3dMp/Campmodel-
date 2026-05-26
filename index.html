@@ -74,7 +74,7 @@ const DEFAULT_PARAMS = {
   // постоянные расходы (фикс/смена)
   rent: 6000, utilities: 800, credit: 3400, internet: 300,
   mobile: 250, services: 1000, mandatoryStaff: 1500,
-  usnPct: 0.05,               // % от выручки         [ПРОВЕРИТЬ]
+  usnPct: 0.06,               // УСН РБ 2026 = 6% от валовой выручки (сверьте с бухгалтером)
   amortization: 0,
   fillPrice: 980,             // цена добора ещё не собранных мест (прогноз)
 };
@@ -323,6 +323,17 @@ function CampModel() {
       {/* ===== ПЛАН ПО СМЕНАМ ===== */}
       {tab === "plan" && (
         <div>
+          <section style={s.gaugeCard}>
+            <div style={s.gaugeHead}>
+              <h2 style={s.h2}>Заполнение смен</h2>
+              <div style={s.sub}>вписано из CRM против плановой цели · всего {factT.children} / {SHIFTS.reduce((a, sh) => a + capacity[sh], 0)} детей</div>
+            </div>
+            <div style={s.gaugeRow}>
+              {SHIFTS.map((sh) => (
+                <Gauge key={sh} shift={sh} value={fact[sh].children} goal={capacity[sh]} />
+              ))}
+            </div>
+          </section>
           <div style={s.planHint}>
             Прогноз прибыли при <b>полном наборе</b>: выручка и расходы (ЗП, питание, бытовые)
             считаются от планового числа детей в каждой смене — 40 или 60 (задаётся во вкладке «Параметры»).
@@ -409,10 +420,10 @@ function CampModel() {
           <section style={s.card}>
             <h2 style={s.h2}>Расходы и налоги</h2>
             <div style={s.tag}>от оборота / ставки</div>
-            <Field label="Кейтеринг, чел/день" value={params.cateringPerDayPerChild} onChange={(v) => setP("cateringPerDayPerChild", v)} suffix="р" check />
+            <Field label="Кейтеринг, чел/день" value={params.cateringPerDayPerChild} onChange={(v) => setP("cateringPerDayPerChild", v)} suffix="р" />
             <Field label="Бытовые, % выручки" value={params.householdPct} onChange={(v) => setP("householdPct", v)} step={0.005} check />
             <Field label="Реклама/смена" value={params.internetAdsPerShift} onChange={(v) => setP("internetAdsPerShift", v)} suffix="р" check />
-            <Field label="УСН, % выручки" value={params.usnPct} onChange={(v) => setP("usnPct", v)} step={0.005} check />
+            <Field label="УСН, % выручки" value={params.usnPct} onChange={(v) => setP("usnPct", v)} step={0.005} />
             <div style={s.divider} />
             <div style={s.tag}>постоянные, фикс/смена</div>
             <Field label="Аренда" value={params.rent} onChange={(v) => setP("rent", v)} suffix="р" />
@@ -620,6 +631,45 @@ const FactCard = ({ num, cap, warn }) => (
   </div>
 );
 
+// --- спидометр заполнения смены (SVG, полукруг) ---
+const Gauge = ({ shift, value, goal }) => {
+  const pct = goal > 0 ? Math.min(value / goal, 1) : 0;
+  const pctText = goal > 0 ? Math.round((value / goal) * 100) : 0;
+  // полукруг: углы от 180° (слева) до 0° (справа)
+  const cx = 80, cy = 80, r = 62;
+  const polar = (frac) => {
+    const a = Math.PI - frac * Math.PI; // 180°→0°
+    return [cx + r * Math.cos(a), cy - r * Math.sin(a)];
+  };
+  const arcPath = (from, to) => {
+    const [x1, y1] = polar(from), [x2, y2] = polar(to);
+    const large = to - from > 0.5 ? 1 : 0;
+    return `M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2}`;
+  };
+  // цвет стрелки по заполнению
+  const col = pct >= 0.85 ? "#3a7d44" : pct >= 0.6 ? "#d99b3f" : "#c0544a";
+  const [nx, ny] = polar(pct);
+  return (
+    <div style={s.gaugeBox}>
+      <svg viewBox="0 0 160 104" style={{ width: "100%", height: "auto" }}>
+        {/* зоны */}
+        <path d={arcPath(0, 0.6)} fill="none" stroke="#ecc9c4" strokeWidth="11" strokeLinecap="round" />
+        <path d={arcPath(0.6, 0.85)} fill="none" stroke="#f0dcae" strokeWidth="11" />
+        <path d={arcPath(0.85, 1)} fill="none" stroke="#bfe0c4" strokeWidth="11" strokeLinecap="round" />
+        {/* стрелка */}
+        <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={col} strokeWidth="3.5" strokeLinecap="round" />
+        <circle cx={cx} cy={cy} r="6" fill={col} />
+        {/* подписи краёв */}
+        <text x="14" y="98" style={s.gaugeEdge}>0</text>
+        <text x="146" y="98" style={s.gaugeEdge} textAnchor="end">{goal}</text>
+      </svg>
+      <div style={s.gaugeNum}>{value}<span style={s.gaugeGoal}> / {goal}</span></div>
+      <div style={{ ...s.gaugePct, color: col }}>{pctText}%</div>
+      <div style={s.gaugeLabel}>Смена {shift}</div>
+    </div>
+  );
+};
+
 const ACCENT = "#d96c3f", INK = "#2b2622", PAPER = "#f4efe7", CARD = "#fffdf9", LINE = "#e3dacb", DAYC = "#3a7d8c";
 const s = {
   app: { background: PAPER, color: INK, fontFamily: "'Georgia',serif", padding: "26px 22px 36px", maxWidth: 1200, margin: "0 auto" },
@@ -668,6 +718,15 @@ const s = {
   shareSum: { fontSize: 13, fontFamily: "system-ui,sans-serif", fontWeight: 600 },
   subSmall: { fontSize: 11.5, color: "#9a9088", fontFamily: "system-ui,sans-serif", marginTop: 4 },
   planHint: { padding: "12px 16px", marginBottom: 14, background: "#f8f3ea", borderLeft: `3px solid ${ACCENT}`, borderRadius: "0 8px 8px 0", fontSize: 13.5, lineHeight: 1.5, color: "#6a625a", fontFamily: "system-ui,sans-serif" },
+  gaugeCard: { background: CARD, border: `1px solid ${LINE}`, borderRadius: 14, padding: "20px 22px", marginBottom: 16, animation: "rise .35s ease both" },
+  gaugeHead: { marginBottom: 12 },
+  gaugeRow: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 },
+  gaugeBox: { textAlign: "center", padding: "4px 2px" },
+  gaugeEdge: { fontSize: "11px", fill: "#b5aca2", fontFamily: "system-ui,sans-serif" },
+  gaugeNum: { fontSize: 26, fontWeight: 700, marginTop: -6, fontVariantNumeric: "tabular-nums" },
+  gaugeGoal: { fontSize: 15, color: "#9a9088", fontWeight: 400 },
+  gaugePct: { fontSize: 14, fontWeight: 700, fontFamily: "system-ui,sans-serif" },
+  gaugeLabel: { fontSize: 12.5, color: "#8a8178", fontFamily: "system-ui,sans-serif", marginTop: 2 },
   groupRow: { padding: "9px 14px", fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: ACCENT, fontWeight: 700, fontFamily: "system-ui,sans-serif", background: "#faf5ec", borderBottom: `1px solid ${LINE}` },
   qtyTd: { padding: "8px 6px", textAlign: "center", borderBottom: `1px solid ${LINE}`, borderLeft: `1px solid #f0ebe1` },
   qtyInput: { width: 46, padding: "7px 4px", textAlign: "center", border: `1.5px solid ${LINE}`, borderRadius: 7, fontFamily: "'Georgia',serif", fontSize: 14, outline: "none" },
