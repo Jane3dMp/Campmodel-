@@ -238,7 +238,7 @@ function CampModel() {
     setSyncing(true);
     // ВПИШИТЕ сюда URL вашего Apps Script (деплой, заканчивается на /exec).
     // Пока пусто — работает демо-режим (для предпросмотра без сети).
-    const APPS_SCRIPT_URL = "";
+    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz5wxIuX1AVKZhbXG-TX_uBRMZqr40AZujStPnMT03Z7KIklvGG6RkgLKe8e3WbtGLKcQ/exec";
     if (!APPS_SCRIPT_URL) {
       await new Promise((r) => setTimeout(r, 700));
       setFact((f) => {
