@@ -15,7 +15,7 @@
 <body>
 <div id="root"></div>
 <script type="text/babel" data-presets="react">
-const { useState, useMemo } = React;
+const { useState, useMemo, useEffect } = React;
 
 
 // ============================================================
@@ -145,6 +145,31 @@ function CampModel() {
   const [lastSync, setLastSync] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [editCell, setEditCell] = useState(null);
+  const [restored, setRestored] = useState(false);
+
+  // --- автозагрузка черновика из браузера при старте ---
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("finmodel_draft");
+      if (raw) {
+        const d = JSON.parse(raw);
+        if (d.capacity) setCapacity(d.capacity);
+        if (d.prices) setPrices(d.prices);
+        if (d.shares) setShares(d.shares);
+        if (Array.isArray(d.roles) && d.roles.length) setRoles(d.roles);
+        if (d.params) setParams(d.params);
+        setRestored(true);
+      }
+    } catch (e) { /* битый черновик — игнорируем, останутся значения по умолчанию */ }
+  }, []);
+
+  // --- автосохранение черновика при любом изменении ---
+  useEffect(() => {
+    try {
+      localStorage.setItem("finmodel_draft",
+        JSON.stringify({ capacity, prices, shares, roles, params, savedAt: Date.now() }));
+    } catch (e) { /* приватный режим / переполнение — тихо пропускаем */ }
+  }, [capacity, prices, shares, roles, params]);
 
   const stAll = { capacity, days, prices, shares, roles, params };
 
@@ -203,6 +228,12 @@ function CampModel() {
     e.target.value = "";
   };
 
+  const resetAll = () => {
+    if (!confirm("Сбросить все данные к значениям по умолчанию? Текущий черновик будет перезаписан.")) return;
+    setCapacity(DEFAULT_CAPACITY); setPrices(DEFAULT_PRICES); setShares(DEFAULT_SHARES);
+    setRoles(DEFAULT_ROLES); setParams(DEFAULT_PARAMS);
+  };
+
   const refreshCRM = async () => {
     setSyncing(true);
     // ВПИШИТЕ сюда URL вашего Apps Script (деплой, заканчивается на /exec).
@@ -254,12 +285,14 @@ function CampModel() {
             {BYN(season.netProfit)}
           </span>
           <div style={s.saveRow}>
-            <button onClick={saveSettings} style={s.saveBtn}>Сохранить</button>
+            <button onClick={saveSettings} style={s.saveBtn}>Скачать копию</button>
             <label style={s.loadBtn}>
               Загрузить
               <input type="file" accept="application/json" onChange={loadSettings} style={{ display: "none" }} />
             </label>
+            <button onClick={resetAll} style={s.resetBtn} title="сбросить к значениям по умолчанию">Сброс</button>
           </div>
+          <div style={s.autosave}>✓ черновик сохраняется автоматически</div>
         </div>
       </header>
 
@@ -572,6 +605,8 @@ const s = {
   saveRow: { display: "flex", gap: 6, marginTop: 8, justifyContent: "flex-end" },
   saveBtn: { padding: "6px 14px", fontSize: 13, border: `1.5px solid ${INK}`, borderRadius: 8, background: INK, color: PAPER, cursor: "pointer", fontFamily: "system-ui,sans-serif", fontWeight: 600 },
   loadBtn: { padding: "6px 14px", fontSize: 13, border: `1.5px solid ${INK}`, borderRadius: 8, background: "transparent", color: INK, cursor: "pointer", fontFamily: "system-ui,sans-serif", fontWeight: 600 },
+  resetBtn: { padding: "6px 12px", fontSize: 13, border: `1.5px solid ${LINE}`, borderRadius: 8, background: "transparent", color: "#9a9088", cursor: "pointer", fontFamily: "system-ui,sans-serif" },
+  autosave: { fontSize: 11, color: "#3a7d44", fontFamily: "system-ui,sans-serif", marginTop: 5, textAlign: "right" },
   nameInput: { border: "1px solid transparent", borderRadius: 6, padding: "4px 6px", fontSize: 14.5, fontFamily: "'Georgia',serif", background: "transparent", color: INK, width: 130, outline: "none" },
   delBtn: { marginLeft: 6, width: 22, height: 22, border: "none", borderRadius: 6, background: "#f4ece6", color: "#c0392b", cursor: "pointer", fontSize: 16, lineHeight: 1, verticalAlign: "middle" },
   addRow: { padding: "8px 14px", borderBottom: `1px solid ${LINE}`, background: "#fdfaf4" },
