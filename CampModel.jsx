@@ -1,0 +1,622 @@
+import React, { useState, useMemo } from "react";
+
+// ============================================================
+//  ФИНМОДЕЛЬ ЛАГЕРЯ 2026 — полная посменная модель (прототип)
+//  6 смен со своими параметрами · ЗП-сетка роли×смены ·
+//  расходы типов фикс/%оборота/ставка×кол-во ·
+//  факт из CRM (демо + кнопка Обновить).
+//  Значения по умолчанию — из вашего файла и скриншотов.
+//  Жёлтым «проверь» помечены неподтверждённые величины.
+// ============================================================
+
+const SHIFTS = [1, 2, 3, 4, 5, 6];
+const KIDS_PER_SQUAD = 10; // 10 детей = 1 отряд = 1 вожатый
+
+// --- наполняемость по сменам (1 и 6 по 40, остальные по 60) ---
+const DEFAULT_CAPACITY = { 1: 40, 2: 60, 3: 60, 4: 60, 5: 60, 6: 40 };
+const DEFAULT_DAYS = { 1: 10, 2: 10, 3: 9, 4: 10, 5: 10, 6: 10 };
+
+// --- цены и доли (3 категории внутри смены) ---
+const DEFAULT_PRICES = { early: 850, normal: 900, full: 1000 };
+const DEFAULT_SHARES = { early: 0.5, normal: 0.3, full: 0.2 };
+
+// --- роли ЗП (ставка за день для type=day, фикс/смена для type=fixed) ---
+// couns (вожатые) — особая роль: кол-во авто = отряды, но переопределяемо
+// type: "day" — ставка/день×дни×qty | "fixed" — фикс/смена×qty
+//       "dayToggle" — ставка/день×дни, считается только на отмеченных сменах (active)
+// 6 вожатых = по числу отрядов на смене 60 детей; на сменах 40 детей активны первые 4
+const allOn = { 1: true, 2: true, 3: true, 4: true, 5: true, 6: true };
+const big = { 1: false, 2: true, 3: true, 4: true, 5: true, 6: false }; // только смены по 60
+const DEFAULT_ROLES = [
+  { id: "admin", name: "Администратор", type: "day", qty: 1, group: "team", rate: fill(100) },
+  { id: "c1", name: "Вожатый 1", type: "dayToggle", group: "couns", rate: fill(80), active: { ...allOn } },
+  { id: "c2", name: "Вожатый 2", type: "dayToggle", group: "couns", rate: fill(80), active: { ...allOn } },
+  { id: "c3", name: "Вожатый 3", type: "dayToggle", group: "couns", rate: fill(80), active: { ...allOn } },
+  { id: "c4", name: "Вожатый 4", type: "dayToggle", group: "couns", rate: fill(80), active: { ...allOn } },
+  { id: "c5", name: "Вожатый 5", type: "dayToggle", group: "couns", rate: fill(80), active: { ...big } },
+  { id: "c6", name: "Вожатый 6", type: "dayToggle", group: "couns", rate: fill(80), active: { ...big } },
+  { id: "ped1",  name: "Педагог 1",     type: "day", qty: 1, group: "team", rate: fill(40) },
+  { id: "ped2",  name: "Педагог 2",     type: "day", qty: 1, group: "team", rate: fill(40) },
+  { id: "ped3",  name: "Педагог 3",     type: "day", qty: 1, group: "team", rate: fill(40) },
+  { id: "video", name: "Видеооператор", type: "fixed", qty: 1, group: "budget", rate: fill(900) },
+  { id: "buh",   name: "Бухгалтер",     type: "fixed", qty: 1, group: "budget", rate: fill(1000) },
+  { id: "smm",   name: "СММ",           type: "fixed", qty: 1, group: "budget", rate: fill(750) },
+  { id: "mkt",   name: "Маркетолог",    type: "fixed", qty: 1, group: "budget", rate: fill(900) },
+  { id: "rop",   name: "РОП",           type: "fixed", qty: 1, group: "budget", rate: fill(1500) },
+  { id: "mng",   name: "Менеджеры",     type: "fixed", qty: 2, group: "budget", rate: fill(950) },
+  { id: "clean", name: "Клининг",       type: "day", qty: 1, group: "budget", rate: fill(55) },
+];
+function fill(v) { return { 1: v, 2: v, 3: v, 4: v, 5: v, 6: v }; }
+
+// --- прочие параметры (общие) ---
+const DEFAULT_PARAMS = {
+  cateringPerDayPerChild: 14, // ставка×кол-во×дни   [ПРОВЕРИТЬ]
+  householdPct: 0.07,         // % от выручки         [ПРОВЕРИТЬ]
+  internetAdsPerShift: 700,   // фикс/смена           [ПРОВЕРИТЬ]
+  // постоянные расходы (фикс/смена)
+  rent: 6000, utilities: 800, credit: 3400, internet: 300,
+  mobile: 250, services: 1000, mandatoryStaff: 1500,
+  usnPct: 0.05,               // % от выручки         [ПРОВЕРИТЬ]
+  amortization: 0,
+};
+
+// --- демо-факт из CRM ---
+const DEMO_FACT = {
+  1: { children: 17, cash: 8200, erip: 5400, forecastIfPaid: 15300 },
+  2: { children: 33, cash: 14100, erip: 9800, forecastIfPaid: 29700 },
+  3: { children: 23, cash: 11200, erip: 6900, forecastIfPaid: 20700 },
+  4: { children: 17, cash: 7600, erip: 5100, forecastIfPaid: 15300 },
+  5: { children: 19, cash: 9000, erip: 5800, forecastIfPaid: 17100 },
+  6: { children: 8,  cash: 3200, erip: 2100, forecastIfPaid: 7200 },
+};
+
+const BYN = (n) => (Math.round(n) || 0).toLocaleString("ru-RU") + " р";
+const PCT = (n) => (n * 100).toFixed(1) + "%";
+const squads = (kids) => Math.ceil(kids / KIDS_PER_SQUAD);
+
+// число людей в роли для смены
+function roleQty(role) {
+  return role.qty || 0;
+}
+function roleCost(role, shift, days) {
+  const rate = role.rate[shift] || 0;
+  if (role.type === "dayToggle")
+    return role.active[shift] ? rate * days[shift] : 0;
+  if (role.type === "day") return rate * days[shift] * (role.qty || 0);
+  return rate * (role.qty || 0); // fixed
+}
+
+// P&L одной смены
+function calcShift(shift, st) {
+  const cap = st.capacity[shift];
+  const days = st.days[shift];
+  const seatsE = cap * st.shares.early;
+  const seatsN = cap * st.shares.normal;
+  const seatsF = cap * st.shares.full;
+  const revenue = seatsE * st.prices.early + seatsN * st.prices.normal + seatsF * st.prices.full;
+
+  const payroll = st.roles.reduce(
+    (sum, r) => sum + roleCost(r, shift, st.days), 0);
+  const catering = st.params.cateringPerDayPerChild * cap * days;
+  const household = revenue * st.params.householdPct;
+  const ads = st.params.internetAdsPerShift;
+  const directCosts = payroll + catering + household + ads;
+
+  const grossProfit = revenue - directCosts;
+  const fixedCosts = st.params.rent + st.params.utilities + st.params.credit +
+    st.params.internet + st.params.mobile + st.params.services + st.params.mandatoryStaff;
+  const ebitda = grossProfit - fixedCosts;
+  const tax = revenue * st.params.usnPct;
+  const netProfit = ebitda - tax - st.params.amortization;
+
+  return { cap, revenue, payroll, catering, household, ads, directCosts,
+    grossProfit, fixedCosts, ebitda, tax, netProfit,
+    grossMargin: revenue ? grossProfit / revenue : 0,
+    netMargin: revenue ? netProfit / revenue : 0 };
+}
+
+export default function CampModel() {
+  const [tab, setTab] = useState("plan");
+  const [capacity, setCapacity] = useState(DEFAULT_CAPACITY);
+  const [days] = useState(DEFAULT_DAYS);
+  const [prices, setPrices] = useState(DEFAULT_PRICES);
+  const [shares, setShares] = useState(DEFAULT_SHARES);
+  const [roles, setRoles] = useState(DEFAULT_ROLES);
+  const [params, setParams] = useState(DEFAULT_PARAMS);
+  const [fact, setFact] = useState(DEMO_FACT);
+  const [lastSync, setLastSync] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [editCell, setEditCell] = useState(null);
+
+  const stAll = { capacity, days, prices, shares, roles, params };
+
+  const perShift = useMemo(
+    () => SHIFTS.map((s) => ({ shift: s, ...calcShift(s, stAll) })),
+    [capacity, prices, shares, roles, params]);
+
+  const season = useMemo(() => perShift.reduce((a, s) => ({
+    revenue: a.revenue + s.revenue, directCosts: a.directCosts + s.directCosts,
+    grossProfit: a.grossProfit + s.grossProfit, fixedCosts: a.fixedCosts + s.fixedCosts,
+    ebitda: a.ebitda + s.ebitda, tax: a.tax + s.tax, netProfit: a.netProfit + s.netProfit,
+  }), { revenue: 0, directCosts: 0, grossProfit: 0, fixedCosts: 0, ebitda: 0, tax: 0, netProfit: 0 }),
+  [perShift]);
+
+  const setP = (k, v) => setParams((s) => ({ ...s, [k]: v }));
+  const setPr = (k, v) => setPrices((s) => ({ ...s, [k]: v }));
+  const setSh = (k, v) => setShares((s) => ({ ...s, [k]: v }));
+  const setCap = (s, v) => setCapacity((c) => ({ ...c, [s]: v }));
+  const setRate = (id, s, v) => setRoles((rs) => rs.map((r) =>
+    r.id === id ? { ...r, rate: { ...r.rate, [s]: v } } : r));
+  const setQty = (id, v) => setRoles((rs) => rs.map((r) => r.id === id ? { ...r, qty: v } : r));
+  const setName = (id, v) => setRoles((rs) => rs.map((r) => r.id === id ? { ...r, name: v } : r));
+  const toggleActive = (id, sh) => setRoles((rs) => rs.map((r) =>
+    r.id === id ? { ...r, active: { ...r.active, [sh]: !r.active[sh] } } : r));
+  const removeRole = (id) => setRoles((rs) => rs.filter((r) => r.id !== id));
+  const addRole = (group, type) => setRoles((rs) => [...rs, {
+    id: "r" + Date.now(),
+    name: type === "fixed" ? "Новая роль (фикс)" : "Новая роль",
+    type, qty: 1, group, rate: fill(0),
+    ...(type === "dayToggle" ? { active: { ...allOn } } : {}),
+  }]);
+
+  // --- сохранение / загрузка всех настроек через файл ---
+  const saveSettings = () => {
+    const data = { capacity, prices, shares, roles, params, v: 1 };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "finmodel-nastroyki.json"; a.click();
+    URL.revokeObjectURL(url);
+  };
+  const loadSettings = (e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const d = JSON.parse(reader.result);
+        if (d.capacity) setCapacity(d.capacity);
+        if (d.prices) setPrices(d.prices);
+        if (d.shares) setShares(d.shares);
+        if (d.roles) setRoles(d.roles);
+        if (d.params) setParams(d.params);
+      } catch { alert("Не удалось прочитать файл настроек"); }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  const refreshCRM = async () => {
+    setSyncing(true);
+    // ВПИШИТЕ сюда URL вашего Apps Script (деплой, заканчивается на /exec).
+    // Пока пусто — работает демо-режим (для предпросмотра без сети).
+    const APPS_SCRIPT_URL = "";
+    if (!APPS_SCRIPT_URL) {
+      await new Promise((r) => setTimeout(r, 700));
+      setFact((f) => {
+        const n = {}; SHIFTS.forEach((sh) => {
+          n[sh] = { ...f[sh], children: f[sh].children + Math.floor(Math.random() * 3) };
+        }); return n;
+      });
+      setLastSync(new Date()); setSyncing(false);
+      return;
+    }
+    try {
+      const r = await fetch(APPS_SCRIPT_URL + "?fullPrice=" + prices.full);
+      const data = await r.json();
+      if (data.ok && data.shifts) {
+        setFact(data.shifts);                 // {1:{children,cash,erip,forecastIfPaid}, ...}
+        setLastSync(new Date(data.updatedAt));
+      } else {
+        alert("CRM вернула ошибку: " + (data.error || "неизвестно"));
+      }
+    } catch (e) {
+      alert("Не удалось обновить из CRM: " + e);
+    }
+    setSyncing(false);
+  };
+
+  const sharesSum = shares.early + shares.normal + shares.full;
+  const factT = SHIFTS.reduce((a, s) => ({
+    children: a.children + fact[s].children, cash: a.cash + fact[s].cash,
+    erip: a.erip + fact[s].erip, forecast: a.forecast + fact[s].forecastIfPaid,
+  }), { children: 0, cash: 0, erip: 0, forecast: 0 });
+  const collected = factT.cash + factT.erip;
+
+  return (
+    <div style={s.app}>
+      <style>{css}</style>
+      <header style={s.header}>
+        <div>
+          <div style={s.kicker}>ФИНАНСОВАЯ МОДЕЛЬ · ЛЕТО 2026</div>
+          <h1 style={s.h1}>Лагерь · посменный дашборд</h1>
+        </div>
+        <div style={s.seasonBox}>
+          <span style={s.seasonCap}>Чистая прибыль за сезон</span>
+          <span style={{ ...s.seasonNum, color: season.netProfit >= 0 ? "#3a7d44" : "#c0392b" }}>
+            {BYN(season.netProfit)}
+          </span>
+          <div style={s.saveRow}>
+            <button onClick={saveSettings} style={s.saveBtn}>Сохранить</button>
+            <label style={s.loadBtn}>
+              Загрузить
+              <input type="file" accept="application/json" onChange={loadSettings} style={{ display: "none" }} />
+            </label>
+          </div>
+        </div>
+      </header>
+
+      <nav style={s.tabs}>
+        {[["plan", "План по сменам"], ["params", "Параметры"], ["payroll", "ЗП"], ["fact", "План vs Факт"]]
+          .map(([id, l]) => (
+          <button key={id} onClick={() => setTab(id)}
+            style={{ ...s.tab, ...(tab === id ? s.tabActive : {}) }}>{l}</button>
+        ))}
+      </nav>
+
+      {/* ===== ПЛАН ПО СМЕНАМ ===== */}
+      {tab === "plan" && (
+        <div style={s.scroll}>
+          <table style={s.ptable}>
+            <thead>
+              <tr>
+                <th style={{ ...s.pth, ...s.pthLeft }}>Показатель</th>
+                {perShift.map((p) => (
+                  <th key={p.shift} style={s.pth}>
+                    Смена {p.shift}<span style={s.pthCap}>{p.cap} детей</span>
+                  </th>
+                ))}
+                <th style={{ ...s.pth, ...s.pthSeason }}>За сезон</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                ["Выручка", "revenue", true],
+                ["Прямые затраты", "directCosts", false],
+                ["— ЗП", "payroll", false, true],
+                ["— кейтеринг", "catering", false, true],
+                ["— бытовые", "household", false, true],
+                ["Валовая прибыль", "grossProfit", true],
+                ["Постоянные расходы", "fixedCosts", false],
+                ["EBITDA", "ebitda", true],
+                ["Налог УСН", "tax", false],
+                ["Чистая прибыль", "netProfit", true, false, true],
+              ].map(([label, key, bold, indent, accent]) => (
+                <tr key={key} style={bold ? s.ptrBold : {}}>
+                  <td style={{ ...s.ptdLeft, paddingLeft: indent ? 28 : 14,
+                    ...(accent ? s.ptdAccent : {}) }}>{label}</td>
+                  {perShift.map((p) => (
+                    <td key={p.shift} style={{ ...s.ptd,
+                      ...(key === "ebitda" || key === "netProfit"
+                        ? { color: p[key] >= 0 ? "#3a7d44" : "#c0392b", fontWeight: 600 } : {}),
+                      ...(accent ? s.ptdAccent : {}) }}>
+                      {BYN(p[key])}
+                    </td>
+                  ))}
+                  <td style={{ ...s.ptd, ...s.ptdSeason,
+                    ...(accent ? { color: season[key] >= 0 ? "#7be3a0" : "#ffb3a3" } : {}) }}>
+                    {BYN(season[key])}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ===== ПАРАМЕТРЫ ===== */}
+      {tab === "params" && (
+        <div style={s.grid3}>
+          <section style={s.card}>
+            <h2 style={s.h2}>Наполняемость по сменам</h2>
+            <div style={s.sub}>детей в смене · отряд = {KIDS_PER_SQUAD}</div>
+            {SHIFTS.map((sh) => (
+              <Field key={sh} label={`Смена ${sh}`} value={capacity[sh]}
+                onChange={(v) => setCap(sh, v)} suffix={`${squads(capacity[sh])} отр.`} />
+            ))}
+          </section>
+
+          <section style={s.card}>
+            <h2 style={s.h2}>Цены и доли</h2>
+            <div style={s.sub}>3 категории внутри смены</div>
+            <Field label="Раннее бронирование" value={prices.early} onChange={(v) => setPr("early", v)} suffix="р" />
+            <Field label="Обычная" value={prices.normal} onChange={(v) => setPr("normal", v)} suffix="р" />
+            <Field label="Полная" value={prices.full} onChange={(v) => setPr("full", v)} suffix="р" />
+            <div style={s.divider} />
+            <Field label="Доля: раннее" value={shares.early} onChange={(v) => setSh("early", v)} step={0.05} />
+            <Field label="Доля: обычная" value={shares.normal} onChange={(v) => setSh("normal", v)} step={0.05} />
+            <Field label="Доля: полная" value={shares.full} onChange={(v) => setSh("full", v)} step={0.05} />
+            <div style={{ ...s.shareSum, color: Math.abs(sharesSum - 1) < 0.001 ? "#3a7d44" : "#c0392b" }}>
+              Сумма: {PCT(sharesSum)} {Math.abs(sharesSum - 1) < 0.001 ? "✓" : "≠ 100%"}
+            </div>
+          </section>
+
+          <section style={s.card}>
+            <h2 style={s.h2}>Расходы и налоги</h2>
+            <div style={s.tag}>от оборота / ставки</div>
+            <Field label="Кейтеринг, чел/день" value={params.cateringPerDayPerChild} onChange={(v) => setP("cateringPerDayPerChild", v)} suffix="р" check />
+            <Field label="Бытовые, % выручки" value={params.householdPct} onChange={(v) => setP("householdPct", v)} step={0.005} check />
+            <Field label="Реклама/смена" value={params.internetAdsPerShift} onChange={(v) => setP("internetAdsPerShift", v)} suffix="р" check />
+            <Field label="УСН, % выручки" value={params.usnPct} onChange={(v) => setP("usnPct", v)} step={0.005} check />
+            <div style={s.divider} />
+            <div style={s.tag}>постоянные, фикс/смена</div>
+            <Field label="Аренда" value={params.rent} onChange={(v) => setP("rent", v)} suffix="р" />
+            <Field label="Коммуналка" value={params.utilities} onChange={(v) => setP("utilities", v)} suffix="р" />
+            <Field label="Кредит" value={params.credit} onChange={(v) => setP("credit", v)} suffix="р" />
+            <Field label="Интернет" value={params.internet} onChange={(v) => setP("internet", v)} suffix="р" />
+            <Field label="Связь" value={params.mobile} onChange={(v) => setP("mobile", v)} suffix="р" />
+            <Field label="Сервисы" value={params.services} onChange={(v) => setP("services", v)} suffix="р" />
+            <Field label="Обяз. выплаты" value={params.mandatoryStaff} onChange={(v) => setP("mandatoryStaff", v)} suffix="р" />
+          </section>
+        </div>
+      )}
+
+      {/* ===== ЗП ===== */}
+      {tab === "payroll" && (
+        <div style={s.scroll}>
+          <table style={s.ptable}>
+            <thead>
+              <tr>
+                <th style={{ ...s.pth, ...s.pthLeft }}>Роль</th>
+                <th style={s.pth}>Кол-во</th>
+                {SHIFTS.map((sh) => (
+                  <th key={sh} style={s.pth}>Смена {sh}<span style={s.pthCap}>{days[sh]} дн.</span></th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {["team", "couns", "budget"].map((g) => (
+                <React.Fragment key={g}>
+                  <tr><td colSpan={2 + SHIFTS.length} style={s.groupRow}>
+                    {g === "team" ? "Команда смены"
+                      : g === "couns" ? "Вожатые (галочка = работает на смене)"
+                      : "Бюджетные / фикс за смену"}
+                  </td></tr>
+                  {roles.filter((r) => r.group === g).map((r) => (
+                    <tr key={r.id} className="prow">
+                      <td style={s.ptdLeft}>
+                        <span style={r.type === "fixed" ? s.dotFix : s.dotDay} />
+                        <input value={r.name} onChange={(e) => setName(r.id, e.target.value)}
+                          style={s.nameInput} />
+                        <button onClick={() => removeRole(r.id)} style={s.delBtn} title="удалить роль">×</button>
+                      </td>
+                      <td style={s.qtyTd}>
+                        {r.type === "dayToggle" ? (
+                          <span style={s.autoTag}>1</span>
+                        ) : (
+                          <input type="number" value={r.qty} min={0}
+                            onChange={(e) => setQty(r.id, parseInt(e.target.value) || 0)}
+                            style={s.qtyInput} />
+                        )}
+                      </td>
+                      {SHIFTS.map((sh) => {
+                        const ed = editCell && editCell.id === r.id && editCell.sh === sh;
+                        const isToggle = r.type === "dayToggle";
+                        const on = isToggle ? r.active[sh] : true;
+                        return (
+                          <td key={sh} style={{ ...s.cellTd, ...(isToggle && !on ? s.cellOff : {}) }}>
+                            {isToggle ? (
+                              <div style={s.toggleCell}>
+                                <input type="checkbox" checked={on}
+                                  onChange={() => toggleActive(r.id, sh)} style={s.chk} />
+                                {ed ? (
+                                  <input autoFocus type="number" value={r.rate[sh]}
+                                    onChange={(e) => setRate(r.id, sh, parseFloat(e.target.value) || 0)}
+                                    onBlur={() => setEditCell(null)}
+                                    onKeyDown={(e) => e.key === "Enter" && setEditCell(null)}
+                                    style={s.cellInput} />
+                                ) : (
+                                  <div style={s.cellView} onClick={() => on && setEditCell({ id: r.id, sh })}>
+                                    <span style={s.cRate}>{on ? r.rate[sh] + "/дн" : "—"}</span>
+                                    <span style={s.cCost}>{on ? BYN(roleCost(r, sh, days)).replace(" р", "") : ""}</span>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div onClick={() => setEditCell({ id: r.id, sh })}>
+                                {ed ? (
+                                  <input autoFocus type="number" value={r.rate[sh]}
+                                    onChange={(e) => setRate(r.id, sh, parseFloat(e.target.value) || 0)}
+                                    onBlur={() => setEditCell(null)}
+                                    onKeyDown={(e) => e.key === "Enter" && setEditCell(null)}
+                                    style={s.cellInput} />
+                                ) : (
+                                  <div style={s.cellView}>
+                                    <span style={s.cRate}>{r.rate[sh]}{r.type === "day" ? "/дн" : ""}</span>
+                                    <span style={s.cCost}>{BYN(roleCost(r, sh, days)).replace(" р", "")}</span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                  <tr>
+                    <td colSpan={2 + SHIFTS.length} style={s.addRow}>
+                      <button onClick={() => addRole(g, g === "couns" ? "dayToggle" : "day")}
+                        style={s.addBtn}>+ роль (ставка/день)</button>
+                      <button onClick={() => addRole(g, "fixed")}
+                        style={s.addBtn}>+ роль (фикс/смена)</button>
+                    </td>
+                  </tr>
+                </React.Fragment>
+              ))}
+              <tr>
+                <td style={s.totLabel} colSpan={2}>ФОТ смены →</td>
+                {perShift.map((p) => (
+                  <td key={p.shift} style={s.totCell}>{BYN(p.payroll).replace(" р", "")}</td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+          <div style={s.note}>
+            Имя роли можно изменить прямо в строке, × удаляет роль, кнопки «+ роль» внизу группы
+            добавляют новую. Вожатые: галочка отмечает работу на смене (40 детей — 4, 60 — 6).
+            Ставку задавайте свою в каждой смене — для случая «педагог дороже студента».
+            Кнопки «Сохранить / Загрузить» вверху сохраняют все настройки в файл и возвращают обратно.
+          </div>
+        </div>
+      )}
+
+      {/* ===== ПЛАН VS ФАКТ ===== */}
+      {tab === "fact" && (
+        <section style={s.card}>
+          <div style={s.factHead}>
+            <div>
+              <h2 style={s.h2}>Факт из AlfaCRM</h2>
+              <div style={s.sub}>
+                {lastSync ? "обновлено: " + lastSync.toLocaleTimeString("ru-RU") : "демо-данные · не синхронизировано"}
+              </div>
+            </div>
+            <button onClick={refreshCRM} disabled={syncing}
+              style={{ ...s.refresh, ...(syncing ? { opacity: 0.6, cursor: "wait" } : {}) }}>
+              {syncing ? "Обновляю…" : "↻ Обновить из CRM"}
+            </button>
+          </div>
+
+          <div style={s.factCards}>
+            <FactCard num={factT.children} cap="детей вписано" />
+            <FactCard num={BYN(collected)} cap="внесено всего" />
+            <FactCard num={BYN(factT.cash)} cap="наличными" />
+            <FactCard num={BYN(factT.erip)} cap="через ЕРИП" />
+            <FactCard num={BYN(factT.forecast)} cap="прогноз (если все оплатят)" warn />
+          </div>
+
+          <div style={s.scroll}>
+            <table style={s.ptable}>
+              <thead><tr>
+                {["Смена", "Детей", "Нал", "ЕРИП", "Внесено", "Прогноз", "Осталось внести"].map((h) => (
+                  <th key={h} style={{ ...s.pth, ...(h === "Смена" ? s.pthLeft : {}) }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {SHIFTS.map((sh) => {
+                  const f = fact[sh]; const got = f.cash + f.erip;
+                  return (
+                    <tr key={sh} className="prow">
+                      <td style={s.ptdLeft}>Смена {sh}</td>
+                      <td style={s.ptd}>{f.children}</td>
+                      <td style={s.ptd}>{BYN(f.cash)}</td>
+                      <td style={s.ptd}>{BYN(f.erip)}</td>
+                      <td style={s.ptd}>{BYN(got)}</td>
+                      <td style={s.ptd}>{BYN(f.forecastIfPaid)}</td>
+                      <td style={{ ...s.ptd, color: "#c0392b" }}>{BYN(f.forecastIfPaid - got)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={s.note}>
+            «Прогноз если все оплатят» = сумма шаблонов оплат всех вписанных детей смены (из CRM).
+            Детей берём через cgi/index по группе смены, нал и ЕРИП — через pay/index по разным кассам.
+            Кнопка «Обновить» вызовет Google Apps Script (заглушка в коде помечена комментарием).
+          </div>
+        </section>
+      )}
+
+      <footer style={s.footer}>
+        Прототип · «проверь» = подтвердить значение · сезон складывается из 6 разных смен
+      </footer>
+    </div>
+  );
+}
+
+const Field = ({ label, value, onChange, suffix, check, step = 1 }) => (
+  <label style={s.field}>
+    <span style={s.fieldLabel}>{label}{check && <span style={s.checkTag}>проверь</span>}</span>
+    <span style={s.inputWrap}>
+      <input type="number" value={value} step={step}
+        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+        style={{ ...s.input, ...(check ? s.inputCheck : {}) }} />
+      {suffix && <span style={s.suffix}>{suffix}</span>}
+    </span>
+  </label>
+);
+
+const FactCard = ({ num, cap, warn }) => (
+  <div style={{ ...s.factCard, ...(warn ? s.factCardWarn : {}) }}>
+    <div style={s.factNum}>{num}</div>
+    <div style={s.factCap}>{cap}</div>
+  </div>
+);
+
+const ACCENT = "#d96c3f", INK = "#2b2622", PAPER = "#f4efe7", CARD = "#fffdf9", LINE = "#e3dacb", DAYC = "#3a7d8c";
+const s = {
+  app: { background: PAPER, color: INK, fontFamily: "'Georgia',serif", padding: "26px 22px 36px", maxWidth: 1200, margin: "0 auto" },
+  header: { display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 16, marginBottom: 20 },
+  kicker: { fontSize: 12, letterSpacing: 3, color: ACCENT, fontWeight: 700, fontFamily: "system-ui,sans-serif" },
+  h1: { fontSize: 36, margin: "6px 0 0", fontWeight: 700, letterSpacing: -0.5 },
+  seasonBox: { textAlign: "right" },
+  seasonCap: { display: "block", fontSize: 12, letterSpacing: 1.5, color: "#8a8178", fontFamily: "system-ui,sans-serif", marginBottom: 4 },
+  seasonNum: { fontSize: 30, fontWeight: 700, fontVariantNumeric: "tabular-nums" },
+  saveRow: { display: "flex", gap: 6, marginTop: 8, justifyContent: "flex-end" },
+  saveBtn: { padding: "6px 14px", fontSize: 13, border: `1.5px solid ${INK}`, borderRadius: 8, background: INK, color: PAPER, cursor: "pointer", fontFamily: "system-ui,sans-serif", fontWeight: 600 },
+  loadBtn: { padding: "6px 14px", fontSize: 13, border: `1.5px solid ${INK}`, borderRadius: 8, background: "transparent", color: INK, cursor: "pointer", fontFamily: "system-ui,sans-serif", fontWeight: 600 },
+  nameInput: { border: "1px solid transparent", borderRadius: 6, padding: "4px 6px", fontSize: 14.5, fontFamily: "'Georgia',serif", background: "transparent", color: INK, width: 130, outline: "none" },
+  delBtn: { marginLeft: 6, width: 22, height: 22, border: "none", borderRadius: 6, background: "#f4ece6", color: "#c0392b", cursor: "pointer", fontSize: 16, lineHeight: 1, verticalAlign: "middle" },
+  addRow: { padding: "8px 14px", borderBottom: `1px solid ${LINE}`, background: "#fdfaf4" },
+  addBtn: { marginRight: 8, padding: "6px 12px", fontSize: 12.5, border: `1.5px dashed ${LINE}`, borderRadius: 8, background: "transparent", color: ACCENT, cursor: "pointer", fontFamily: "system-ui,sans-serif", fontWeight: 600 },
+  tabs: { display: "flex", gap: 4, marginBottom: 20, borderBottom: `1.5px solid ${LINE}`, flexWrap: "wrap" },
+  tab: { padding: "11px 20px", border: "none", background: "transparent", fontSize: 15, cursor: "pointer", color: "#8a8178", fontFamily: "system-ui,sans-serif", borderBottom: "3px solid transparent", marginBottom: -1.5 },
+  tabActive: { color: INK, fontWeight: 600, borderBottom: `3px solid ${ACCENT}` },
+  scroll: { overflowX: "auto", border: `1px solid ${LINE}`, borderRadius: 14, background: CARD },
+  ptable: { width: "100%", borderCollapse: "collapse", minWidth: 820 },
+  pth: { padding: "12px 10px", fontSize: 12, color: "#8a8178", fontFamily: "system-ui,sans-serif", borderBottom: `2px solid ${LINE}`, textAlign: "center", whiteSpace: "nowrap" },
+  pthLeft: { textAlign: "left", paddingLeft: 14, minWidth: 150 },
+  pthCap: { display: "block", fontSize: 10, color: "#b5aca2", fontWeight: 400, marginTop: 2 },
+  pthSeason: { background: "#faf5ec", color: ACCENT, fontWeight: 700 },
+  ptrBold: { fontWeight: 700 },
+  ptdLeft: { padding: "10px 14px", fontSize: 14.5, borderBottom: `1px solid ${LINE}`, whiteSpace: "nowrap" },
+  ptd: { padding: "10px", fontSize: 14.5, borderBottom: `1px solid ${LINE}`, borderLeft: `1px solid #f0ebe1`, textAlign: "center", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
+  ptdSeason: { background: "#faf5ec", fontWeight: 700 },
+  ptdAccent: { color: ACCENT, fontWeight: 700 },
+  grid3: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(280px,1fr))", gap: 16 },
+  card: { background: CARD, border: `1px solid ${LINE}`, borderRadius: 14, padding: "22px 24px", animation: "rise .35s ease both" },
+  h2: { fontSize: 20, margin: "0 0 2px", fontWeight: 700 },
+  sub: { fontSize: 13, color: "#9a9088", marginBottom: 14, fontFamily: "system-ui,sans-serif" },
+  tag: { fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: ACCENT, fontWeight: 700, fontFamily: "system-ui,sans-serif", margin: "0 0 10px" },
+  field: { display: "block", marginBottom: 12 },
+  fieldLabel: { fontSize: 13, color: "#6a625a", fontFamily: "system-ui,sans-serif", display: "flex", alignItems: "center", gap: 7, marginBottom: 5 },
+  checkTag: { fontSize: 10, letterSpacing: 1, background: "#ffe9a8", color: "#8a6d1a", padding: "1px 7px", borderRadius: 20, fontWeight: 700, textTransform: "uppercase" },
+  inputWrap: { position: "relative", display: "flex", alignItems: "center" },
+  input: { width: "100%", padding: "10px 12px", fontSize: 16, border: `1.5px solid ${LINE}`, borderRadius: 9, background: "#fff", fontFamily: "'Georgia',serif", color: INK, outline: "none", boxSizing: "border-box" },
+  inputCheck: { background: "#fffaf0", borderColor: "#f0d98a" },
+  suffix: { position: "absolute", right: 12, fontSize: 13, color: "#9a9088", pointerEvents: "none" },
+  divider: { height: 1, background: LINE, margin: "16px 0" },
+  shareSum: { fontSize: 13, fontFamily: "system-ui,sans-serif", fontWeight: 600 },
+  groupRow: { padding: "9px 14px", fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: ACCENT, fontWeight: 700, fontFamily: "system-ui,sans-serif", background: "#faf5ec", borderBottom: `1px solid ${LINE}` },
+  qtyTd: { padding: "8px 6px", textAlign: "center", borderBottom: `1px solid ${LINE}`, borderLeft: `1px solid #f0ebe1` },
+  qtyInput: { width: 46, padding: "7px 4px", textAlign: "center", border: `1.5px solid ${LINE}`, borderRadius: 7, fontFamily: "'Georgia',serif", fontSize: 14, outline: "none" },
+  autoQty: { fontSize: 13, color: DAYC, fontFamily: "system-ui,sans-serif", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 },
+  autoTag: { fontSize: 12, color: "#9a9088", fontFamily: "system-ui,sans-serif" },
+  toggleCell: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6 },
+  chk: { width: 15, height: 15, accentColor: DAYC, cursor: "pointer", flexShrink: 0 },
+  cellOff: { background: "#f4f1ec" },
+  cellTd: { padding: "6px 8px", borderBottom: `1px solid ${LINE}`, borderLeft: `1px solid #f0ebe1`, textAlign: "center", cursor: "pointer", minWidth: 80 },
+  cellView: { display: "flex", flexDirection: "column", lineHeight: 1.25 },
+  cRate: { fontSize: 12.5, color: "#9a9088", fontFamily: "system-ui,sans-serif" },
+  cCost: { fontSize: 14, fontWeight: 600, fontVariantNumeric: "tabular-nums" },
+  cellInput: { width: 62, padding: "7px 4px", textAlign: "center", border: `2px solid ${ACCENT}`, borderRadius: 7, fontFamily: "'Georgia',serif", fontSize: 14, outline: "none" },
+  totLabel: { padding: "13px 14px", textAlign: "right", fontWeight: 700, fontSize: 13.5, fontFamily: "system-ui,sans-serif", background: INK, color: PAPER },
+  totCell: { padding: "13px 8px", textAlign: "center", fontWeight: 700, fontSize: 14.5, background: INK, color: "#fff", fontVariantNumeric: "tabular-nums", borderLeft: "1px solid #3d3833" },
+  factHead: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 14, marginBottom: 18 },
+  refresh: { padding: "12px 22px", fontSize: 15, fontWeight: 600, border: "none", borderRadius: 10, background: ACCENT, color: "#fff", cursor: "pointer", fontFamily: "system-ui,sans-serif", boxShadow: "0 2px 8px rgba(217,108,63,.35)" },
+  factCards: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 20 },
+  factCard: { background: "#f8f3ea", border: `1px solid ${LINE}`, borderRadius: 12, padding: "16px 18px" },
+  factCardWarn: { background: "#fcefe9", borderColor: "#f0c4b0" },
+  factNum: { fontSize: 24, fontWeight: 700, fontVariantNumeric: "tabular-nums" },
+  factCap: { fontSize: 12, color: "#8a8178", fontFamily: "system-ui,sans-serif", marginTop: 3 },
+  note: { marginTop: 16, padding: "12px 14px", background: "#f8f3ea", borderLeft: `3px solid ${ACCENT}`, fontSize: 13, lineHeight: 1.55, color: "#6a625a", borderRadius: "0 8px 8px 0", fontFamily: "system-ui,sans-serif" },
+  footer: { marginTop: 26, fontSize: 12, color: "#9a9088", textAlign: "center", fontFamily: "system-ui,sans-serif" },
+  dotDay: { display: "inline-block", width: 8, height: 8, borderRadius: 2, background: DAYC, marginRight: 8 },
+  dotFix: { display: "inline-block", width: 8, height: 8, borderRadius: 2, background: ACCENT, marginRight: 8 },
+};
+const css = `
+.prow:hover td { background: #faf6ee; }
+.prow:hover input[style*="transparent"] { border-color: #e3dacb; }
+input[type=number]::-webkit-inner-spin-button { opacity: .35; }
+button:hover { filter: brightness(.97); }
+@keyframes rise { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform:none; } }
+`;
