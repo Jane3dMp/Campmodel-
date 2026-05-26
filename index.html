@@ -107,11 +107,10 @@ const EXPENSE_MAP = [
   { itemId: 8,  name: "Телефон",           plan: (p, m) => m.mobile },
   { itemId: 11, name: "Реклама",           plan: (p, m) => p.ads },
   { itemId: 12, name: "Сервисы",           plan: (p, m) => m.services },
-  { itemId: 13, name: "Бюджетные ЗП",      plan: (p, m) => p.payroll },
+  { itemId: 13, name: "Бюджетные ЗП",      plan: (p, m) => p.payroll, factItems: [13, 4] },
   { itemId: 14, name: "Кредит",            plan: (p, m) => m.credit },
   { itemId: 15, name: "Налог",             plan: (p, m) => p.tax },
-  { itemId: 4,  name: "Уборка",            plan: () => null },
-  { itemId: 17, name: "ФСЗН и белгосстрах", plan: () => null },
+  { itemId: 17, name: "ФСЗН и белгосстрах", plan: (p, m) => m.mandatoryStaff },
 ];
 const PCT = (n) => (n * 100).toFixed(1) + "%";
 const squads = (kids) => Math.ceil(kids / KIDS_PER_SQUAD);
@@ -659,7 +658,9 @@ function CampModel() {
                     let planTot = 0, factTot = 0;
                     const rows = EXPENSE_MAP.map((row) => {
                       const planVal = row.plan(p, params);
-                      const factVal = factShift ? (factShift[row.itemId] || 0) : null;
+                      const factVal = factShift
+                        ? (row.factItems || [row.itemId]).reduce((s, id) => s + (factShift[id] || 0), 0)
+                        : null;
                       if (planVal != null) planTot += planVal;
                       if (factVal != null) factTot += factVal;
                       const diff = (planVal != null && factVal != null) ? factVal - planVal : null;
@@ -690,8 +691,7 @@ function CampModel() {
             <div style={s.note}>
               План — расходы этой смены из модели. Факт — расходы из AlfaCRM, внесённые в даты смены
               (смена {expShift}: {SHIFT_DATE_LABEL[expShift]}). Разница красная — потрачено больше плана,
-              зелёная — меньше. «Уборка» и «ФСЗН» пока без планового аналога. Постоянные расходы (аренда,
-              кредит) попадают в ту смену, в чьи даты прошёл платёж.
+              зелёная — меньше. Постоянные расходы (аренда, кредит) попадают в ту смену, в чьи даты прошёл платёж.
             </div>
           </div>
         </section>
