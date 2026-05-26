@@ -90,6 +90,23 @@ const DEMO_FACT = {
 };
 
 const BYN = (n) => (Math.round(n) || 0).toLocaleString("ru-RU") + " р";
+
+// карта: id статьи расхода в CRM → как называется и где плановое значение в модели
+// (план берём за сезон: помесячные ×6, ЗП — сумма ФОТ всех смен)
+const EXPENSE_MAP = [
+  { itemId: 1,  name: "Аренда",            plan: (m) => m.rent * 6 },
+  { itemId: 2,  name: "Коммунальные",      plan: (m) => m.utilities * 6 },
+  { itemId: 3,  name: "Бытовые",           plan: (m) => m.householdSeason },
+  { itemId: 9,  name: "Интернет",          plan: (m) => m.internet * 6 },
+  { itemId: 8,  name: "Телефон",           plan: (m) => m.mobile * 6 },
+  { itemId: 11, name: "Реклама",           plan: (m) => m.adsSeason },
+  { itemId: 12, name: "Сервисы",           plan: (m) => m.services * 6 },
+  { itemId: 13, name: "Бюджетные ЗП",      plan: (m) => m.payrollSeason },
+  { itemId: 14, name: "Кредит",            plan: (m) => m.credit * 6 },
+  { itemId: 15, name: "Налог",             plan: (m) => m.taxSeason },
+  { itemId: 4,  name: "Уборка",            plan: () => null },   // нет прямого аналога в модели
+  { itemId: 17, name: "ФСЗН и белгосстрах", plan: () => null },
+];
 const PCT = (n) => (n * 100).toFixed(1) + "%";
 const squads = (kids) => Math.ceil(kids / KIDS_PER_SQUAD);
 
@@ -143,6 +160,7 @@ function CampModel() {
   const [roles, setRoles] = useState(DEFAULT_ROLES);
   const [params, setParams] = useState(DEFAULT_PARAMS);
   const [fact, setFact] = useState(DEMO_FACT);
+  const [expenses, setExpenses] = useState(null); // факт расходов из CRM по статьям
   const [lastSync, setLastSync] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [editCell, setEditCell] = useState(null);
@@ -257,6 +275,7 @@ function CampModel() {
       const data = await r.json();
       if (data.ok && data.shifts) {
         setFact(data.shifts);                 // {1:{children,cash,erip,forecastIfPaid}, ...}
+        if (data.expenses) setExpenses(data.expenses); // {pay_item_id: сумма}
         setLastSync(new Date(data.updatedAt));
       } else {
         alert("CRM вернула ошибку: " + (data.error || "неизвестно"));
@@ -601,6 +620,53 @@ function CampModel() {
             + недобор мест (план − вписанные) × цена добора {BYN(params.fillPrice)}.
             То есть уже зашедшие идут по обычной цене, а ещё не собранных считаем дороже.
             Цены, доли, набор и цену добора меняете во вкладке «Параметры». Факт — из AlfaCRM по кнопке.
+          </div>
+
+          {/* ===== РАСХОДЫ: ПЛАН / ФАКТ ===== */}
+          <div style={{ marginTop: 22 }}>
+            <h2 style={s.h2}>Расходы: план vs факт</h2>
+            <div style={s.sub}>
+              {expenses
+                ? "факт по статьям из AlfaCRM за сезон"
+                : "факт появится, когда в CRM будут расходы (пока сезон не начался)"}
+            </div>
+            <div style={s.scroll}>
+              <table style={s.ptable}>
+                <thead><tr>
+                  {["Статья", "План (сезон)", "Факт из CRM", "Разница"].map((h, i) => (
+                    <th key={h} style={{ ...s.pth, ...(i === 0 ? s.pthLeft : {}) }}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {EXPENSE_MAP.map((row) => {
+                    const planVal = row.plan({
+                      rent: params.rent, utilities: params.utilities, internet: params.internet,
+                      mobile: params.mobile, services: params.services, credit: params.credit,
+                      householdSeason: season.household, adsSeason: perShift.reduce((a, p) => a + p.ads, 0),
+                      payrollSeason: season.payroll, taxSeason: season.tax,
+                    });
+                    const factVal = expenses ? (expenses[row.itemId] || 0) : null;
+                    const diff = (planVal != null && factVal != null) ? factVal - planVal : null;
+                    return (
+                      <tr key={row.itemId} className="prow">
+                        <td style={s.ptdLeft}>{row.name}</td>
+                        <td style={s.ptd}>{planVal != null ? BYN(planVal) : "—"}</td>
+                        <td style={s.ptd}>{factVal != null ? BYN(factVal) : "—"}</td>
+                        <td style={{ ...s.ptd, color: diff == null ? "#9a9088" : diff > 0 ? "#c0392b" : "#3a7d44" }}>
+                          {diff != null ? (diff > 0 ? "+" : "") + BYN(diff) : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={s.note}>
+              План берётся из вашей модели за сезон (помесячные расходы ×6, ЗП — суммарный ФОТ).
+              Факт — сумма по статьям из AlfaCRM. «Разница» красная, если потрачено больше плана,
+              зелёная — если меньше. Статьи «Уборка», «ФСЗН» в модели пока без планового аналога
+              (покажут только факт, когда появится). Расходы в CRM не делятся по сменам — поэтому сравнение за сезон целиком.
+            </div>
           </div>
         </section>
       )}
