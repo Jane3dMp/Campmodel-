@@ -148,17 +148,18 @@ function CampModel() {
   const [editCell, setEditCell] = useState(null);
   const [restored, setRestored] = useState(false);
 
-  // --- автозагрузка черновика из браузера при старте ---
+  // --- автозагрузка черновика из браузера при старте (со склейкой с дефолтами) ---
   useEffect(() => {
     try {
       const raw = localStorage.getItem("finmodel_draft");
       if (raw) {
         const d = JSON.parse(raw);
-        if (d.capacity) setCapacity(d.capacity);
-        if (d.prices) setPrices(d.prices);
-        if (d.shares) setShares(d.shares);
+        // склейка: дефолт снизу, сохранённое сверху — новые поля не теряются
+        if (d.capacity) setCapacity({ ...DEFAULT_CAPACITY, ...d.capacity });
+        if (d.prices) setPrices({ ...DEFAULT_PRICES, ...d.prices });
+        if (d.shares) setShares({ ...DEFAULT_SHARES, ...d.shares });
         if (Array.isArray(d.roles) && d.roles.length) setRoles(d.roles);
-        if (d.params) setParams(d.params);
+        if (d.params) setParams({ ...DEFAULT_PARAMS, ...d.params });
         setRestored(true);
       }
     } catch (e) { /* битый черновик — игнорируем, останутся значения по умолчанию */ }
@@ -180,9 +181,10 @@ function CampModel() {
 
   const season = useMemo(() => perShift.reduce((a, s) => ({
     revenue: a.revenue + s.revenue, directCosts: a.directCosts + s.directCosts,
+    payroll: a.payroll + s.payroll, catering: a.catering + s.catering, household: a.household + s.household,
     grossProfit: a.grossProfit + s.grossProfit, fixedCosts: a.fixedCosts + s.fixedCosts,
     ebitda: a.ebitda + s.ebitda, tax: a.tax + s.tax, netProfit: a.netProfit + s.netProfit,
-  }), { revenue: 0, directCosts: 0, grossProfit: 0, fixedCosts: 0, ebitda: 0, tax: 0, netProfit: 0 }),
+  }), { revenue: 0, directCosts: 0, payroll: 0, catering: 0, household: 0, grossProfit: 0, fixedCosts: 0, ebitda: 0, tax: 0, netProfit: 0 }),
   [perShift]);
 
   const setP = (k, v) => setParams((s) => ({ ...s, [k]: v }));
@@ -218,11 +220,11 @@ function CampModel() {
     reader.onload = () => {
       try {
         const d = JSON.parse(reader.result);
-        if (d.capacity) setCapacity(d.capacity);
-        if (d.prices) setPrices(d.prices);
-        if (d.shares) setShares(d.shares);
+        if (d.capacity) setCapacity({ ...DEFAULT_CAPACITY, ...d.capacity });
+        if (d.prices) setPrices({ ...DEFAULT_PRICES, ...d.prices });
+        if (d.shares) setShares({ ...DEFAULT_SHARES, ...d.shares });
         if (d.roles) setRoles(d.roles);
-        if (d.params) setParams(d.params);
+        if (d.params) setParams({ ...DEFAULT_PARAMS, ...d.params });
       } catch { alert("Не удалось прочитать файл настроек"); }
     };
     reader.readAsText(file);
@@ -320,7 +322,12 @@ function CampModel() {
 
       {/* ===== ПЛАН ПО СМЕНАМ ===== */}
       {tab === "plan" && (
-        <div style={s.scroll}>
+        <div>
+          <div style={s.planHint}>
+            Прогноз прибыли при <b>полном наборе</b>: выручка и расходы (ЗП, питание, бытовые)
+            считаются от планового числа детей в каждой смене — 40 или 60 (задаётся во вкладке «Параметры»).
+          </div>
+          <div style={s.scroll}>
           <table style={s.ptable}>
             <thead>
               <tr>
@@ -365,6 +372,7 @@ function CampModel() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -659,6 +667,7 @@ const s = {
   divider: { height: 1, background: LINE, margin: "16px 0" },
   shareSum: { fontSize: 13, fontFamily: "system-ui,sans-serif", fontWeight: 600 },
   subSmall: { fontSize: 11.5, color: "#9a9088", fontFamily: "system-ui,sans-serif", marginTop: 4 },
+  planHint: { padding: "12px 16px", marginBottom: 14, background: "#f8f3ea", borderLeft: `3px solid ${ACCENT}`, borderRadius: "0 8px 8px 0", fontSize: 13.5, lineHeight: 1.5, color: "#6a625a", fontFamily: "system-ui,sans-serif" },
   groupRow: { padding: "9px 14px", fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: ACCENT, fontWeight: 700, fontFamily: "system-ui,sans-serif", background: "#faf5ec", borderBottom: `1px solid ${LINE}` },
   qtyTd: { padding: "8px 6px", textAlign: "center", borderBottom: `1px solid ${LINE}`, borderLeft: `1px solid #f0ebe1` },
   qtyInput: { width: 46, padding: "7px 4px", textAlign: "center", border: `1.5px solid ${LINE}`, borderRadius: 7, fontFamily: "'Georgia',serif", fontSize: 14, outline: "none" },
