@@ -171,6 +171,7 @@ function CampModel() {
   const [editCell, setEditCell] = useState(null);
   const [restored, setRestored] = useState(false);
   const [expShift, setExpShift] = useState(1); // выбранная смена для блока расходов
+  const [hideProfit, setHideProfit] = useState(false); // скрыть сумму чистой прибыли
 
   // --- автозагрузка черновика из браузера при старте (со склейкой с дефолтами) ---
   useEffect(() => {
@@ -321,9 +322,15 @@ function CampModel() {
           <h1 style={s.h1}>Лагерь · посменный дашборд</h1>
         </div>
         <div style={s.seasonBox}>
-          <span style={s.seasonCap}>Чистая прибыль за сезон</span>
-          <span style={{ ...s.seasonNum, color: season.netProfit >= 0 ? "#3a7d44" : "#c0392b" }}>
-            {BYN(season.netProfit)}
+          <span style={s.seasonCap}>
+            Чистая прибыль за сезон
+            <span onClick={() => setHideProfit(!hideProfit)} style={s.eyeBtn}
+              title={hideProfit ? "показать" : "скрыть"}>
+              {hideProfit ? "🙈" : "👁"}
+            </span>
+          </span>
+          <span style={{ ...s.seasonNum, color: hideProfit ? "#b5aca2" : (season.netProfit >= 0 ? "#3a7d44" : "#c0392b") }}>
+            {hideProfit ? "••• •••" : BYN(season.netProfit)}
           </span>
           <div style={s.saveRow}>
             <button onClick={saveSettings} style={s.saveBtn}>Скачать копию</button>
@@ -770,6 +777,7 @@ const s = {
   h1: { fontSize: 36, margin: "6px 0 0", fontWeight: 700, letterSpacing: -0.5 },
   seasonBox: { textAlign: "right" },
   seasonCap: { display: "block", fontSize: 12, letterSpacing: 1.5, color: "#8a8178", fontFamily: "system-ui,sans-serif", marginBottom: 4 },
+  eyeBtn: { cursor: "pointer", marginLeft: 6, fontSize: 13, userSelect: "none", letterSpacing: 0, verticalAlign: "middle" },
   seasonNum: { fontSize: 30, fontWeight: 700, fontVariantNumeric: "tabular-nums" },
   saveRow: { display: "flex", gap: 6, marginTop: 8, justifyContent: "flex-end" },
   saveBtn: { padding: "6px 14px", fontSize: 13, border: `1.5px solid ${INK}`, borderRadius: 8, background: INK, color: PAPER, cursor: "pointer", fontFamily: "system-ui,sans-serif", fontWeight: 600 },
