@@ -70,6 +70,7 @@ function fill(v) { return { 1: v, 2: v, 3: v, 4: v, 5: v, 6: v }; }
 const DEFAULT_PARAMS = {
   cateringPerDayPerChild: 14, // руб/день × (дети+вожатые+админ) × дни смены
   householdPct: 0.07,         // бытовые, % от выручки
+  clubInvestPct: 0.02,        // вложения в клуб, % от выручки
   internetAdsPerShift: 700,   // реклама, фикс/смена
   // постоянные расходы (фикс/смена) — зафиксированы по факту на старте
   rent: 4000, utilities: 400, credit: 2000, internet: 200,
@@ -111,7 +112,7 @@ const EXPENSE_MAP = [
   { itemId: 14, name: "Кредит",            plan: (p, m) => m.credit },
   { itemId: 15, name: "Налог",             plan: (p, m) => p.tax },
   { itemId: 17, name: "ФСЗН и белгосстрах", plan: (p, m) => m.mandatoryStaff },
-  { itemId: 10, name: "Вложения в клуб",   plan: () => null },
+  { itemId: 10, name: "Вложения в клуб",   plan: (p, m) => p.clubInvest },
   { itemId: 16, name: "Комиссия Банка",    plan: () => null },
   { itemId: 20, name: "Без статьи",        plan: () => null },
 ];
@@ -157,8 +158,9 @@ function calcShift(shift, st) {
   const catering = st.params.cateringPerDayPerChild * eaters * days;
 
   const household = revenue * st.params.householdPct;
+  const clubInvest = revenue * (st.params.clubInvestPct || 0);
   const ads = st.params.internetAdsPerShift;
-  const directCosts = payroll + catering + household + ads;
+  const directCosts = payroll + catering + household + clubInvest + ads;
 
   const grossProfit = revenue - directCosts;
   const fixedCosts = st.params.rent + st.params.utilities + st.params.credit +
@@ -167,7 +169,7 @@ function calcShift(shift, st) {
   const tax = revenue * st.params.usnPct;
   const netProfit = ebitda - tax - st.params.amortization;
 
-  return { cap, revenue, payroll, payrollPed, payrollOther, catering, household, ads, directCosts, eaters,
+  return { cap, revenue, payroll, payrollPed, payrollOther, catering, household, clubInvest, ads, directCosts, eaters,
     grossProfit, fixedCosts, ebitda, tax, netProfit,
     grossMargin: revenue ? grossProfit / revenue : 0,
     netMargin: revenue ? netProfit / revenue : 0 };
@@ -224,9 +226,10 @@ function CampModel() {
   const season = useMemo(() => perShift.reduce((a, s) => ({
     revenue: a.revenue + s.revenue, directCosts: a.directCosts + s.directCosts,
     payroll: a.payroll + s.payroll, catering: a.catering + s.catering, household: a.household + s.household,
+    clubInvest: a.clubInvest + s.clubInvest, ads: a.ads + s.ads,
     grossProfit: a.grossProfit + s.grossProfit, fixedCosts: a.fixedCosts + s.fixedCosts,
     ebitda: a.ebitda + s.ebitda, tax: a.tax + s.tax, netProfit: a.netProfit + s.netProfit,
-  }), { revenue: 0, directCosts: 0, payroll: 0, catering: 0, household: 0, grossProfit: 0, fixedCosts: 0, ebitda: 0, tax: 0, netProfit: 0 }),
+  }), { revenue: 0, directCosts: 0, payroll: 0, catering: 0, household: 0, clubInvest: 0, ads: 0, grossProfit: 0, fixedCosts: 0, ebitda: 0, tax: 0, netProfit: 0 }),
   [perShift]);
 
   const setP = (k, v) => setParams((s) => ({ ...s, [k]: v }));
@@ -400,6 +403,8 @@ function CampModel() {
                 ["— ЗП", "payroll", false, true],
                 ["— кейтеринг", "catering", false, true],
                 ["— бытовые", "household", false, true],
+                ["— вложения в клуб", "clubInvest", false, true],
+                ["— реклама", "ads", false, true],
                 ["Валовая прибыль", "grossProfit", true],
                 ["Постоянные расходы", "fixedCosts", false],
                 ["EBITDA", "ebitda", true],
@@ -465,6 +470,7 @@ function CampModel() {
             <Field label="Кейтеринг, чел/день" value={params.cateringPerDayPerChild} onChange={(v) => setP("cateringPerDayPerChild", v)} suffix="р" />
             <div style={s.subSmall}>× (дети + вожатые на смене + админ) × дни смены</div>
             <Field label="Бытовые, % выручки" value={params.householdPct} onChange={(v) => setP("householdPct", v)} step={0.005} check />
+            <Field label="Вложения в клуб, % выручки" value={params.clubInvestPct} onChange={(v) => setP("clubInvestPct", v)} step={0.005} />
             <Field label="Реклама/смена" value={params.internetAdsPerShift} onChange={(v) => setP("internetAdsPerShift", v)} suffix="р" check />
             <Field label="УСН, % выручки" value={params.usnPct} onChange={(v) => setP("usnPct", v)} step={0.005} />
             <div style={s.divider} />
