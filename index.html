@@ -68,9 +68,9 @@ function fill(v) { return { 1: v, 2: v, 3: v, 4: v, 5: v, 6: v }; }
 
 // --- прочие параметры (общие) ---
 const DEFAULT_PARAMS = {
-  cateringPerDayPerChild: 14, // ставка×кол-во×дни   [ПРОВЕРИТЬ]
-  householdPct: 0.07,         // % от выручки         [ПРОВЕРИТЬ]
-  internetAdsPerShift: 700,   // фикс/смена           [ПРОВЕРИТЬ]
+  cateringPerDayPerChild: 14, // руб/день × (дети+вожатые+админ) × дни смены
+  householdPct: 0.07,         // бытовые, % от выручки
+  internetAdsPerShift: 700,   // реклама, фикс/смена
   // постоянные расходы (фикс/смена) — зафиксированы по факту на старте
   rent: 4000, utilities: 400, credit: 2000, internet: 200,
   mobile: 125, services: 700, mandatoryStaff: 1500,
@@ -103,11 +103,11 @@ const EXPENSE_MAP = [
   { itemId: 3,  name: "Бытовые",           plan: (p, m) => p.household },
   { itemId: 19, name: "Кейтеринг",         plan: (p, m) => p.catering },
   { itemId: 9,  name: "Интернет",          plan: (p, m) => m.internet },
-  { itemId: 8,  name: "Телефон",           plan: (p, m) => m.mobile },
+  { itemId: 8,  name: "Связь",             plan: (p, m) => m.mobile },
   { itemId: 11, name: "Реклама",           plan: (p, m) => p.ads },
   { itemId: 12, name: "Сервисы",           plan: (p, m) => m.services },
-  { itemId: 13, name: "Бюджетные ЗП",      plan: (p, m) => p.payroll },
-  { itemId: 18, name: "ЗП за МК",          plan: () => null },
+  { itemId: 13, name: "Бюджетные ЗП",      plan: (p, m) => p.payrollOther },
+  { itemId: 18, name: "ЗП за МК",          plan: (p, m) => p.payrollPed },
   { itemId: 14, name: "Кредит",            plan: (p, m) => m.credit },
   { itemId: 15, name: "Налог",             plan: (p, m) => p.tax },
   { itemId: 17, name: "ФСЗН и белгосстрах", plan: (p, m) => m.mandatoryStaff },
@@ -141,6 +141,11 @@ function calcShift(shift, st) {
 
   const payroll = st.roles.reduce(
     (sum, r) => sum + roleCost(r, shift, st.days), 0);
+  // раздельный ФОТ: педагоги (ЗП за МК) и все остальные (Бюджетные ЗП)
+  const isPedagog = (r) => r.id === "ped1" || r.id === "ped2" || r.id === "ped3";
+  const payrollPed = st.roles.filter(isPedagog)
+    .reduce((sum, r) => sum + roleCost(r, shift, st.days), 0);
+  const payrollOther = payroll - payrollPed;
 
   // едоки на кейтеринге: дети + вожатые (активные на смене) + администратор
   const counsCount = st.roles.filter(
@@ -162,7 +167,7 @@ function calcShift(shift, st) {
   const tax = revenue * st.params.usnPct;
   const netProfit = ebitda - tax - st.params.amortization;
 
-  return { cap, revenue, payroll, catering, household, ads, directCosts, eaters,
+  return { cap, revenue, payroll, payrollPed, payrollOther, catering, household, ads, directCosts, eaters,
     grossProfit, fixedCosts, ebitda, tax, netProfit,
     grossMargin: revenue ? grossProfit / revenue : 0,
     netMargin: revenue ? netProfit / revenue : 0 };
