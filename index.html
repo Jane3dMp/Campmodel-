@@ -202,7 +202,14 @@ function CampModel() {
         if (d.capacity) setCapacity({ ...DEFAULT_CAPACITY, ...d.capacity });
         if (d.prices) setPrices({ ...DEFAULT_PRICES, ...d.prices });
         if (d.shares) setShares({ ...DEFAULT_SHARES, ...d.shares });
-        if (Array.isArray(d.roles) && d.roles.length) setRoles(d.roles);
+        if (Array.isArray(d.roles) && d.roles.length) {
+          // переносим флаг pedagog с дефолтных ролей (старый черновик мог его не содержать)
+          const merged = d.roles.map((r) => {
+            const def = DEFAULT_ROLES.find((x) => x.id === r.id);
+            return def && def.pedagog && r.pedagog === undefined ? { ...r, pedagog: true } : r;
+          });
+          setRoles(merged);
+        }
         if (d.params) setParams({ ...DEFAULT_PARAMS, ...d.params });
         setRestored(true);
       }
@@ -269,7 +276,10 @@ function CampModel() {
         if (d.capacity) setCapacity({ ...DEFAULT_CAPACITY, ...d.capacity });
         if (d.prices) setPrices({ ...DEFAULT_PRICES, ...d.prices });
         if (d.shares) setShares({ ...DEFAULT_SHARES, ...d.shares });
-        if (d.roles) setRoles(d.roles);
+        if (d.roles) setRoles(d.roles.map((r) => {
+          const def = DEFAULT_ROLES.find((x) => x.id === r.id);
+          return def && def.pedagog && r.pedagog === undefined ? { ...r, pedagog: true } : r;
+        }));
         if (d.params) setParams({ ...DEFAULT_PARAMS, ...d.params });
       } catch { alert("Не удалось прочитать файл настроек"); }
     };
