@@ -51,8 +51,8 @@ const DEFAULT_ROLES = [
   { id: "c2", name: "Вожатый 2", type: "dayToggle", group: "couns", rate: fill(80), active: { ...allOn } },
   { id: "c3", name: "Вожатый 3", type: "dayToggle", group: "couns", rate: fill(80), active: { ...allOn } },
   { id: "c4", name: "Вожатый 4", type: "dayToggle", group: "couns", rate: fill(80), active: { ...allOn } },
-  { id: "c5", name: "Вожатый 5", type: "dayToggle", group: "couns", rate: fill(80), active: { ...big } },
-  { id: "c6", name: "Вожатый 6", type: "dayToggle", group: "couns", rate: fill(80), active: { ...big } },
+  { id: "c5", name: "Вожатый 5", type: "dayToggle", group: "couns", rate: fill(40), active: { ...big } },
+  { id: "c6", name: "Вожатый 6", type: "dayToggle", group: "couns", rate: fill(40), active: { ...big } },
   { id: "ped1",  name: "Педагог 1",     type: "day", qty: 1, group: "team", rate: fill(40) },
   { id: "ped2",  name: "Педагог 2",     type: "day", qty: 1, group: "team", rate: fill(40) },
   { id: "ped3",  name: "Педагог 3",     type: "day", qty: 1, group: "team", rate: fill(40) },
@@ -71,22 +71,20 @@ const DEFAULT_PARAMS = {
   cateringPerDayPerChild: 14, // ставка×кол-во×дни   [ПРОВЕРИТЬ]
   householdPct: 0.07,         // % от выручки         [ПРОВЕРИТЬ]
   internetAdsPerShift: 700,   // фикс/смена           [ПРОВЕРИТЬ]
-  // постоянные расходы (фикс/смена)
-  rent: 6000, utilities: 800, credit: 3400, internet: 300,
-  mobile: 250, services: 1000, mandatoryStaff: 1500,
+  // постоянные расходы (фикс/смена) — зафиксированы по факту на старте
+  rent: 4000, utilities: 400, credit: 2000, internet: 200,
+  mobile: 125, services: 700, mandatoryStaff: 1500,
   usnPct: 0.06,               // УСН РБ 2026 = 6% от валовой выручки (сверьте с бухгалтером)
   amortization: 0,
   fillPrice: 980,             // цена добора ещё не собранных мест (прогноз)
 };
 
 // --- демо-факт из CRM ---
-const DEMO_FACT = {
-  1: { children: 17, cash: 8200, erip: 5400, forecastIfPaid: 15300 },
-  2: { children: 33, cash: 14100, erip: 9800, forecastIfPaid: 29700 },
-  3: { children: 23, cash: 11200, erip: 6900, forecastIfPaid: 20700 },
-  4: { children: 17, cash: 7600, erip: 5100, forecastIfPaid: 15300 },
-  5: { children: 19, cash: 9000, erip: 5800, forecastIfPaid: 17100 },
-  6: { children: 8,  cash: 3200, erip: 2100, forecastIfPaid: 7200 },
+// стартовый факт — нули до автозагрузки из CRM при открытии
+const EMPTY_FACT = {
+  1: { children: 0, cash: 0, erip: 0 }, 2: { children: 0, cash: 0, erip: 0 },
+  3: { children: 0, cash: 0, erip: 0 }, 4: { children: 0, cash: 0, erip: 0 },
+  5: { children: 0, cash: 0, erip: 0 }, 6: { children: 0, cash: 0, erip: 0 },
 };
 
 const BYN = (n) => (Math.round(n) || 0).toLocaleString("ru-RU") + " р";
@@ -97,20 +95,25 @@ const SHIFT_DATE_LABEL = {
 };
 
 // карта: id статьи расхода в CRM → название и плановое значение для ОДНОЙ смены
-// p — объект расчёта смены (из perShift), m — общие помесячные параметры
-// постоянные расходы (аренда, кредит и т.п.) задаются на смену как есть из params
+// p — расчёт смены (perShift), m — помесячные параметры (params)
+// factItems — если факт собирается из нескольких статей CRM; plan: ()=>null — факт без плана
 const EXPENSE_MAP = [
   { itemId: 1,  name: "Аренда",            plan: (p, m) => m.rent },
   { itemId: 2,  name: "Коммунальные",      plan: (p, m) => m.utilities },
   { itemId: 3,  name: "Бытовые",           plan: (p, m) => p.household },
+  { itemId: 19, name: "Кейтеринг",         plan: (p, m) => p.catering },
   { itemId: 9,  name: "Интернет",          plan: (p, m) => m.internet },
   { itemId: 8,  name: "Телефон",           plan: (p, m) => m.mobile },
   { itemId: 11, name: "Реклама",           plan: (p, m) => p.ads },
   { itemId: 12, name: "Сервисы",           plan: (p, m) => m.services },
-  { itemId: 13, name: "Бюджетные ЗП",      plan: (p, m) => p.payroll, factItems: [13, 4] },
+  { itemId: 13, name: "Бюджетные ЗП",      plan: (p, m) => p.payroll },
+  { itemId: 18, name: "ЗП за МК",          plan: () => null },
   { itemId: 14, name: "Кредит",            plan: (p, m) => m.credit },
   { itemId: 15, name: "Налог",             plan: (p, m) => p.tax },
   { itemId: 17, name: "ФСЗН и белгосстрах", plan: (p, m) => m.mandatoryStaff },
+  { itemId: 10, name: "Вложения в клуб",   plan: () => null },
+  { itemId: 16, name: "Комиссия Банка",    plan: () => null },
+  { itemId: 20, name: "Без статьи",        plan: () => null },
 ];
 const PCT = (n) => (n * 100).toFixed(1) + "%";
 const squads = (kids) => Math.ceil(kids / KIDS_PER_SQUAD);
@@ -138,7 +141,16 @@ function calcShift(shift, st) {
 
   const payroll = st.roles.reduce(
     (sum, r) => sum + roleCost(r, shift, st.days), 0);
-  const catering = st.params.cateringPerDayPerChild * cap * days;
+
+  // едоки на кейтеринге: дети + вожатые (активные на смене) + администратор
+  const counsCount = st.roles.filter(
+    (r) => r.group === "couns" && r.active && r.active[shift]).length;
+  const adminCount = st.roles
+    .filter((r) => r.id === "admin")
+    .reduce((sum, r) => sum + (r.qty || 0), 0);
+  const eaters = cap + counsCount + adminCount;
+  const catering = st.params.cateringPerDayPerChild * eaters * days;
+
   const household = revenue * st.params.householdPct;
   const ads = st.params.internetAdsPerShift;
   const directCosts = payroll + catering + household + ads;
@@ -150,7 +162,7 @@ function calcShift(shift, st) {
   const tax = revenue * st.params.usnPct;
   const netProfit = ebitda - tax - st.params.amortization;
 
-  return { cap, revenue, payroll, catering, household, ads, directCosts,
+  return { cap, revenue, payroll, catering, household, ads, directCosts, eaters,
     grossProfit, fixedCosts, ebitda, tax, netProfit,
     grossMargin: revenue ? grossProfit / revenue : 0,
     netMargin: revenue ? netProfit / revenue : 0 };
@@ -164,7 +176,7 @@ function CampModel() {
   const [shares, setShares] = useState(DEFAULT_SHARES);
   const [roles, setRoles] = useState(DEFAULT_ROLES);
   const [params, setParams] = useState(DEFAULT_PARAMS);
-  const [fact, setFact] = useState(DEMO_FACT);
+  const [fact, setFact] = useState(EMPTY_FACT);
   const [expensesByShift, setExpensesByShift] = useState(null); // факт расходов из CRM по сменам/статьям
   const [lastSync, setLastSync] = useState(null);
   const [syncing, setSyncing] = useState(false);
@@ -262,21 +274,10 @@ function CampModel() {
     setRoles(DEFAULT_ROLES); setParams(DEFAULT_PARAMS);
   };
 
+  const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz5wxIuX1AVKZhbXG-TX_uBRMZqr40AZujStPnMT03Z7KIklvGG6RkgLKe8e3WbtGLKcQ/exec";
+
   const refreshCRM = async () => {
     setSyncing(true);
-    // ВПИШИТЕ сюда URL вашего Apps Script (деплой, заканчивается на /exec).
-    // Пока пусто — работает демо-режим (для предпросмотра без сети).
-    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz5wxIuX1AVKZhbXG-TX_uBRMZqr40AZujStPnMT03Z7KIklvGG6RkgLKe8e3WbtGLKcQ/exec";
-    if (!APPS_SCRIPT_URL) {
-      await new Promise((r) => setTimeout(r, 700));
-      setFact((f) => {
-        const n = {}; SHIFTS.forEach((sh) => {
-          n[sh] = { ...f[sh], children: f[sh].children + Math.floor(Math.random() * 3) };
-        }); return n;
-      });
-      setLastSync(new Date()); setSyncing(false);
-      return;
-    }
     try {
       const r = await fetch(APPS_SCRIPT_URL + "?fullPrice=" + prices.full);
       const data = await r.json();
@@ -296,6 +297,9 @@ function CampModel() {
     }
     setSyncing(false);
   };
+
+  // --- автозагрузка из CRM при открытии дашборда ---
+  useEffect(() => { refreshCRM(); }, []);
 
   const sharesSum = shares.early + shares.normal + shares.full;
   // средняя взвешенная цена места (по долям категорий) — для уже вписанных
@@ -453,6 +457,7 @@ function CampModel() {
             <h2 style={s.h2}>Расходы и налоги</h2>
             <div style={s.tag}>от оборота / ставки</div>
             <Field label="Кейтеринг, чел/день" value={params.cateringPerDayPerChild} onChange={(v) => setP("cateringPerDayPerChild", v)} suffix="р" />
+            <div style={s.subSmall}>× (дети + вожатые на смене + админ) × дни смены</div>
             <Field label="Бытовые, % выручки" value={params.householdPct} onChange={(v) => setP("householdPct", v)} step={0.005} check />
             <Field label="Реклама/смена" value={params.internetAdsPerShift} onChange={(v) => setP("internetAdsPerShift", v)} suffix="р" check />
             <Field label="УСН, % выручки" value={params.usnPct} onChange={(v) => setP("usnPct", v)} step={0.005} />
@@ -585,7 +590,9 @@ function CampModel() {
             <div>
               <h2 style={s.h2}>Факт из AlfaCRM</h2>
               <div style={s.sub}>
-                {lastSync ? "обновлено: " + lastSync.toLocaleTimeString("ru-RU") : "демо-данные · не синхронизировано"}
+                {syncing ? "загрузка из CRM…"
+                  : lastSync ? "обновлено: " + lastSync.toLocaleTimeString("ru-RU")
+                  : "нет данных — нажмите «Обновить»"}
               </div>
             </div>
             <button onClick={refreshCRM} disabled={syncing}
