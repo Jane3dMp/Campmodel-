@@ -53,9 +53,9 @@ const DEFAULT_ROLES = [
   { id: "c4", name: "Вожатый 4", type: "dayToggle", group: "couns", rate: fill(80), active: { ...allOn } },
   { id: "c5", name: "Вожатый 5", type: "dayToggle", group: "couns", rate: fill(40), active: { ...big } },
   { id: "c6", name: "Вожатый 6", type: "dayToggle", group: "couns", rate: fill(40), active: { ...big } },
-  { id: "ped1",  name: "Педагог 1",     type: "day", qty: 1, group: "team", rate: fill(40) },
-  { id: "ped2",  name: "Педагог 2",     type: "day", qty: 1, group: "team", rate: fill(40) },
-  { id: "ped3",  name: "Педагог 3",     type: "day", qty: 1, group: "team", rate: fill(40) },
+  { id: "ped1",  name: "Педагог 1",     type: "day", qty: 1, group: "team", rate: fill(40), pedagog: true },
+  { id: "ped2",  name: "Педагог 2",     type: "day", qty: 1, group: "team", rate: fill(40), pedagog: true },
+  { id: "ped3",  name: "Педагог 3",     type: "day", qty: 1, group: "team", rate: fill(40), pedagog: true },
   { id: "video", name: "Видеооператор", type: "fixed", qty: 1, group: "budget", rate: fill(900) },
   { id: "buh",   name: "Бухгалтер",     type: "fixed", qty: 1, group: "budget", rate: fill(1000) },
   { id: "smm",   name: "СММ",           type: "fixed", qty: 1, group: "budget", rate: fill(750) },
@@ -142,7 +142,7 @@ function calcShift(shift, st) {
   const payroll = st.roles.reduce(
     (sum, r) => sum + roleCost(r, shift, st.days), 0);
   // раздельный ФОТ: педагоги (ЗП за МК) и все остальные (Бюджетные ЗП)
-  const isPedagog = (r) => r.id === "ped1" || r.id === "ped2" || r.id === "ped3";
+  const isPedagog = (r) => r.pedagog === true;
   const payrollPed = st.roles.filter(isPedagog)
     .reduce((sum, r) => sum + roleCost(r, shift, st.days), 0);
   const payrollOther = payroll - payrollPed;
@@ -237,6 +237,7 @@ function CampModel() {
     r.id === id ? { ...r, rate: { ...r.rate, [s]: v } } : r));
   const setQty = (id, v) => setRoles((rs) => rs.map((r) => r.id === id ? { ...r, qty: v } : r));
   const setName = (id, v) => setRoles((rs) => rs.map((r) => r.id === id ? { ...r, name: v } : r));
+  const togglePedagog = (id) => setRoles((rs) => rs.map((r) => r.id === id ? { ...r, pedagog: !r.pedagog } : r));
   const toggleActive = (id, sh) => setRoles((rs) => rs.map((r) =>
     r.id === id ? { ...r, active: { ...r.active, [sh]: !r.active[sh] } } : r));
   const removeRole = (id) => setRoles((rs) => rs.filter((r) => r.id !== id));
@@ -506,6 +507,13 @@ function CampModel() {
                         <span style={r.type === "fixed" ? s.dotFix : s.dotDay} />
                         <input value={r.name} onChange={(e) => setName(r.id, e.target.value)}
                           style={s.nameInput} />
+                        {g === "team" && r.id !== "admin" && (
+                          <label style={s.pedTag} title="относить ЗП к статье «ЗП за МК»">
+                            <input type="checkbox" checked={!!r.pedagog}
+                              onChange={() => togglePedagog(r.id)} style={s.pedChk} />
+                            педагог
+                          </label>
+                        )}
                         <button onClick={() => removeRole(r.id)} style={s.delBtn} title="удалить роль">×</button>
                       </td>
                       <td style={s.qtyTd}>
@@ -797,6 +805,8 @@ const s = {
   resetBtn: { padding: "6px 12px", fontSize: 13, border: `1.5px solid ${LINE}`, borderRadius: 8, background: "transparent", color: "#9a9088", cursor: "pointer", fontFamily: "system-ui,sans-serif" },
   autosave: { fontSize: 11, color: "#3a7d44", fontFamily: "system-ui,sans-serif", marginTop: 5, textAlign: "right" },
   nameInput: { border: "1px solid transparent", borderRadius: 6, padding: "4px 6px", fontSize: 14.5, fontFamily: "'Georgia',serif", background: "transparent", color: INK, width: 130, outline: "none" },
+  pedTag: { fontSize: 11, color: "#8a8178", fontFamily: "system-ui,sans-serif", marginLeft: 4, cursor: "pointer", whiteSpace: "nowrap" },
+  pedChk: { width: 12, height: 12, accentColor: DAYC, cursor: "pointer", verticalAlign: "middle", marginRight: 2 },
   delBtn: { marginLeft: 6, width: 22, height: 22, border: "none", borderRadius: 6, background: "#f4ece6", color: "#c0392b", cursor: "pointer", fontSize: 16, lineHeight: 1, verticalAlign: "middle" },
   addRow: { padding: "8px 14px", borderBottom: `1px solid ${LINE}`, background: "#fdfaf4" },
   addBtn: { marginRight: 8, padding: "6px 12px", fontSize: 12.5, border: `1.5px dashed ${LINE}`, borderRadius: 8, background: "transparent", color: ACCENT, cursor: "pointer", fontFamily: "system-ui,sans-serif", fontWeight: 600 },
