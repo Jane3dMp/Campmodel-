@@ -91,10 +91,33 @@ const EMPTY_FACT = {
 
 const BYN = (n) => (Math.round(n) || 0).toLocaleString("ru-RU") + " р";
 
-const SHIFT_DATE_LABEL = {
-  1: "1–12 июня", 2: "13–26 июня", 3: "27 июня – 10 июля",
+const SHIFT_DATE_LABEL = {  1: "1–12 июня", 2: "13–26 июня", 3: "27 июня – 10 июля",
   4: "11–24 июля", 5: "25 июля – 7 авг", 6: "8–21 авг",
 };
+
+// машинные даты смен — для расчёта оставшихся дней (от сегодня до e_date)
+const SHIFT_RANGES = {
+  1: { from: new Date(2026, 5, 1),  to: new Date(2026, 5, 12) },
+  2: { from: new Date(2026, 5, 13), to: new Date(2026, 5, 26) },
+  3: { from: new Date(2026, 5, 27), to: new Date(2026, 6, 10) },
+  4: { from: new Date(2026, 6, 11), to: new Date(2026, 6, 24) },
+  5: { from: new Date(2026, 6, 25), to: new Date(2026, 7, 7)  },
+  6: { from: new Date(2026, 7, 8),  to: new Date(2026, 7, 21) },
+};
+
+// сколько РАБОЧИХ дней смены осталось, считая от сегодня:
+//   - смена ещё не началась → все рабочие дни (10 или 9)
+//   - идёт → пропорционально (rabочие × доля_оставшегося_календарного_времени)
+//   - закончилась → 0
+function remainingDaysOfShift(shift, fullDays) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const r = SHIFT_RANGES[shift]; if (!r) return fullDays;
+  if (today <= r.from) return fullDays;
+  if (today > r.to) return 0;
+  const totalCal = (r.to - r.from) / 86400000 + 1;        // календарных дней в смене
+  const remainCal = (r.to - today) / 86400000 + 1;        // календарных осталось (вкл. сегодня)
+  return Math.max(0, Math.round(fullDays * (remainCal / totalCal)));
+}
 
 // карта: id статьи расхода в CRM → название и плановое значение для ОДНОЙ смены
 // p — расчёт смены (perShift), m — помесячные параметры (params)
@@ -139,7 +162,9 @@ function calcShiftActual(shift, st, factShift) {
   const noAbon = (factShift && factShift.noAbonChildren) || 0;
   const days = st.days[shift];
   const revAbon = (factShift && factShift.revenueEnrolled) || 0;
-  const revNoAbon = noAbon * (st.params.pricePerDayNoAbon || 0) * days;
+  // для детей без абонемента — только оставшиеся дни смены (от сегодня до e_date)
+  const remainDays = remainingDaysOfShift(shift, days);
+  const revNoAbon = noAbon * (st.params.pricePerDayNoAbon || 0) * remainDays;
   const revenue = revAbon + revNoAbon;
 
   // ФОТ и постоянные расходы — те же, как и в плане (не зависят от числа детей)
@@ -171,7 +196,7 @@ function calcShiftActual(shift, st, factShift) {
   const tax = revenue * st.params.usnPct;
   const netProfit = ebitda - tax - st.params.amortization;
 
-  return { enrolled, noAbon, revAbon, revNoAbon, revenue, payroll, payrollPed, payrollOther,
+  return { enrolled, noAbon, revAbon, revNoAbon, revenue, remainDays, payroll, payrollPed, payrollOther,
     catering, household, clubInvest, ads, directCosts, eaters,
     grossProfit, fixedCosts, ebitda, tax, netProfit };
 }
@@ -536,7 +561,8 @@ function CampModel() {
           <div style={{ marginTop: 22 }}>
             <div style={s.planHint}>
               Прогноз прибыли при <b>текущем наборе из CRM</b>: выручка = реальные абонементы вписанных
-              детей (цена тарифа × дни смены) + дети без летнего абонемента × {BYN(params.pricePerDayNoAbon)} × дни.
+              детей (цена тарифа × дни смены) + дети без летнего абонемента × {BYN(params.pricePerDayNoAbon)}
+              × <b>оставшиеся дни смены</b> (если смена идёт — от сегодня до конца; не началась — все дни).
               Расходы на детях (питание) — от фактического числа. Кнопка «↻ Обновить факт» обновляет число
               детей и оплаты быстро (~15 сек); «↻ Выручка по абонементам» пересчитывает выручку из реальных
               тарифов (медленно, до 5 мин — нажимайте редко).
@@ -549,7 +575,7 @@ function CampModel() {
                     {perShiftActual.map((p) => (
                       <th key={p.shift} style={s.pth}>
                         Смена {p.shift}
-                        <div style={s.thSub}>{p.enrolled} детей{p.noAbon > 0 ? " (+" + p.noAbon + " без абон.)" : ""}</div>
+                        <div style={s.thSub}>{p.enrolled} детей{p.noAbon > 0 ? " (+" + p.noAbon + " без абон. × " + p.remainDays + "дн)" : ""}</div>
                       </th>
                     ))}
                     <th style={{ ...s.pth, ...s.pthSeason }}>За сезон</th>
