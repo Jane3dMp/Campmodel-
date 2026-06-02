@@ -31,7 +31,7 @@ const SHIFTS = [1, 2, 3, 4, 5, 6];
 const KIDS_PER_SQUAD = 10; // 10 детей = 1 отряд = 1 вожатый
 
 // --- наполняемость по сменам (1 и 6 по 40, остальные по 60) ---
-const DEFAULT_CAPACITY = { 1: 40, 2: 60, 3: 60, 4: 60, 5: 60, 6: 50 };
+const DEFAULT_CAPACITY = { 1: 40, 2: 60, 3: 60, 4: 60, 5: 60, 6: 40 };
 const DEFAULT_DAYS = { 1: 10, 2: 10, 3: 9, 4: 10, 5: 10, 6: 10 };
 
 // --- цены и доли (3 категории внутри смены) ---
@@ -78,6 +78,7 @@ const DEFAULT_PARAMS = {
   usnPct: 0.06,               // УСН РБ 2026 = 6% от валовой выручки (сверьте с бухгалтером)
   amortization: 0,
   fillPrice: 980,             // цена добора ещё не собранных мест (прогноз)
+  pricePerDayNoAbon: 100,     // цена/день для ребёнка без абонемента в CRM
 };
 
 // --- демо-факт из CRM ---
@@ -129,6 +130,50 @@ function roleCost(role, shift, days) {
     return role.active[shift] ? rate * days[shift] : 0;
   if (role.type === "day") return rate * days[shift] * (role.qty || 0);
   return rate * (role.qty || 0); // fixed
+}
+
+// P&L одной смены при ТЕКУЩЕМ наборе (из CRM):
+// число детей = фактически вписанные, выручка = по реальным абонементам + потенциал бесабонементных
+function calcShiftActual(shift, st, factShift) {
+  const enrolled = (factShift && factShift.children) || 0;
+  const noAbon = (factShift && factShift.noAbonChildren) || 0;
+  const days = st.days[shift];
+  const revAbon = (factShift && factShift.revenueEnrolled) || 0;
+  const revNoAbon = noAbon * (st.params.pricePerDayNoAbon || 0) * days;
+  const revenue = revAbon + revNoAbon;
+
+  // ФОТ и постоянные расходы — те же, как и в плане (не зависят от числа детей)
+  const payroll = st.roles.reduce(
+    (sum, r) => sum + roleCost(r, shift, st.days), 0);
+  const isPedagog = (r) => r.pedagog === true;
+  const payrollPed = st.roles.filter(isPedagog)
+    .reduce((sum, r) => sum + roleCost(r, shift, st.days), 0);
+  const payrollOther = payroll - payrollPed;
+
+  // кейтеринг — от ФАКТИЧЕСКИХ детей + вожатые + админ
+  const counsCount = st.roles.filter(
+    (r) => r.group === "couns" && r.active && r.active[shift]).length;
+  const adminCount = st.roles
+    .filter((r) => r.id === "admin")
+    .reduce((sum, r) => sum + (r.qty || 0), 0);
+  const eaters = enrolled + counsCount + adminCount;
+  const catering = st.params.cateringPerDayPerChild * eaters * days;
+
+  const household = revenue * st.params.householdPct;
+  const clubInvest = revenue * (st.params.clubInvestPct || 0);
+  const ads = st.params.internetAdsPerShift;
+  const directCosts = payroll + catering + household + clubInvest + ads;
+
+  const grossProfit = revenue - directCosts;
+  const fixedCosts = st.params.rent + st.params.utilities + st.params.credit +
+    st.params.internet + st.params.mobile + st.params.services + st.params.mandatoryStaff;
+  const ebitda = grossProfit - fixedCosts;
+  const tax = revenue * st.params.usnPct;
+  const netProfit = ebitda - tax - st.params.amortization;
+
+  return { enrolled, noAbon, revAbon, revNoAbon, revenue, payroll, payrollPed, payrollOther,
+    catering, household, clubInvest, ads, directCosts, eaters,
+    grossProfit, fixedCosts, ebitda, tax, netProfit };
 }
 
 // P&L одной смены
@@ -230,6 +275,21 @@ function CampModel() {
     () => SHIFTS.map((s) => ({ shift: s, ...calcShift(s, stAll) })),
     [capacity, prices, shares, roles, params]);
 
+  const perShiftActual = useMemo(
+    () => SHIFTS.map((s) => ({ shift: s, ...calcShiftActual(s, stAll, fact[s]) })),
+    [fact, roles, params]);
+
+  const seasonActual = useMemo(() => perShiftActual.reduce((a, s) => ({
+    revenue: a.revenue + s.revenue, payroll: a.payroll + s.payroll,
+    catering: a.catering + s.catering, household: a.household + s.household,
+    clubInvest: a.clubInvest + s.clubInvest, ads: a.ads + s.ads,
+    directCosts: a.directCosts + s.directCosts, grossProfit: a.grossProfit + s.grossProfit,
+    fixedCosts: a.fixedCosts + s.fixedCosts, ebitda: a.ebitda + s.ebitda,
+    tax: a.tax + s.tax, netProfit: a.netProfit + s.netProfit,
+  }), { revenue: 0, payroll: 0, catering: 0, household: 0, clubInvest: 0, ads: 0,
+       directCosts: 0, grossProfit: 0, fixedCosts: 0, ebitda: 0, tax: 0, netProfit: 0 }),
+  [perShiftActual]);
+
   const season = useMemo(() => perShift.reduce((a, s) => ({
     revenue: a.revenue + s.revenue, directCosts: a.directCosts + s.directCosts,
     payroll: a.payroll + s.payroll, catering: a.catering + s.catering, household: a.household + s.household,
@@ -301,7 +361,7 @@ function CampModel() {
       const r = await fetch(APPS_SCRIPT_URL + "?fullPrice=" + prices.full);
       const data = await r.json();
       if (data.ok && data.shifts) {
-        setFact(data.shifts);                 // {1:{children,cash,erip,forecastIfPaid}, ...}
+        setFact(data.shifts);                 // {1:{children,cash,erip,revenueEnrolled,noAbonChildren}, ...}
         if (data.expensesByShift) setExpensesByShift(data.expensesByShift); // {1:{item:сумма},...}
         setLastSync(new Date(data.updatedAt));
       } else {
@@ -441,6 +501,66 @@ function CampModel() {
             </tbody>
           </table>
           </div>
+
+          {/* ===== P&L ПРИ ТЕКУЩЕМ НАБОРЕ (из CRM) ===== */}
+          <div style={{ marginTop: 22 }}>
+            <div style={s.planHint}>
+              Прогноз прибыли при <b>текущем наборе из CRM</b>: выручка = реальные абонементы вписанных
+              детей (цена тарифа × дни смены) + дети без летнего абонемента × {BYN(params.pricePerDayNoAbon)} × дни.
+              Расходы на детях (питание) — от фактического числа. Кнопка «Обновить из CRM» обновляет данные.
+            </div>
+            <div style={s.scroll}>
+              <table style={s.ptable}>
+                <thead>
+                  <tr>
+                    <th style={{ ...s.pth, ...s.pthLeft }}>Показатель</th>
+                    {perShiftActual.map((p) => (
+                      <th key={p.shift} style={s.pth}>
+                        Смена {p.shift}
+                        <div style={s.thSub}>{p.enrolled} детей{p.noAbon > 0 ? " (+" + p.noAbon + " без абон.)" : ""}</div>
+                      </th>
+                    ))}
+                    <th style={{ ...s.pth, ...s.pthSeason }}>За сезон</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    ["Выручка", "revenue", true],
+                    ["— по абонементам", "revAbon", false, true],
+                    ["— без абонемента", "revNoAbon", false, true],
+                    ["Прямые затраты", "directCosts", false],
+                    ["— ЗП", "payroll", false, true],
+                    ["— кейтеринг", "catering", false, true],
+                    ["— бытовые", "household", false, true],
+                    ["— вложения в клуб", "clubInvest", false, true],
+                    ["— реклама", "ads", false, true],
+                    ["Валовая прибыль", "grossProfit", true],
+                    ["Постоянные расходы", "fixedCosts", false],
+                    ["EBITDA", "ebitda", true],
+                    ["Налог УСН", "tax", false],
+                    ["Чистая прибыль", "netProfit", true, false, true],
+                  ].map(([label, key, bold, indent, accent]) => (
+                    <tr key={key} className="prow">
+                      <td style={{ ...s.ptdLeft, ...(bold ? s.ptdBold : {}), ...(indent ? s.ptdIndent : {}),
+                        ...(accent ? s.ptdAccent : {}) }}>{label}</td>
+                      {perShiftActual.map((p) => (
+                        <td key={p.shift} style={{ ...s.ptd, ...(bold ? s.ptdBold : {}),
+                          ...(key === "ebitda" || key === "grossProfit"
+                            ? { color: p[key] >= 0 ? "#3a7d44" : "#c0392b", fontWeight: 600 } : {}),
+                          ...(accent ? s.ptdAccent : {}) }}>
+                          {BYN(p[key])}
+                        </td>
+                      ))}
+                      <td style={{ ...s.ptd, ...s.ptdSeason,
+                        ...(accent ? { color: seasonActual[key] >= 0 ? "#7be3a0" : "#ffb3a3" } : {}) }}>
+                        {BYN(seasonActual[key])}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 
@@ -472,6 +592,8 @@ function CampModel() {
             <div style={s.divider} />
             <Field label="Цена добора (прогноз)" value={params.fillPrice} onChange={(v) => setP("fillPrice", v)} suffix="р" />
             <div style={s.subSmall}>по этой цене считаются ещё не собранные места в прогнозе</div>
+            <Field label="Цена дня без абонемента" value={params.pricePerDayNoAbon} onChange={(v) => setP("pricePerDayNoAbon", v)} suffix="р" />
+            <div style={s.subSmall}>для расчёта выручки вписанных детей, у которых ещё нет летнего абонемента в CRM</div>
           </section>
 
           <section style={s.card}>
