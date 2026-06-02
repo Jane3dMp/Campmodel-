@@ -231,7 +231,9 @@ function CampModel() {
   const [fact, setFact] = useState(EMPTY_FACT);
   const [expensesByShift, setExpensesByShift] = useState(null); // факт расходов из CRM по сменам/статьям
   const [lastSync, setLastSync] = useState(null);
+  const [lastSyncAbon, setLastSyncAbon] = useState(null);
   const [syncing, setSyncing] = useState(false);
+  const [syncingAbon, setSyncingAbon] = useState(false);
   const [editCell, setEditCell] = useState(null);
   const [restored, setRestored] = useState(false);
   const [expShift, setExpShift] = useState(1); // выбранная смена для блока расходов
@@ -358,26 +360,54 @@ function CampModel() {
   const refreshCRM = async () => {
     setSyncing(true);
     try {
-      const r = await fetch(APPS_SCRIPT_URL + "?fullPrice=" + prices.full);
+      const r = await fetch(APPS_SCRIPT_URL + "?action=fast&fullPrice=" + prices.full);
       const data = await r.json();
       if (data.ok && data.shifts) {
-        setFact(data.shifts);                 // {1:{children,cash,erip,revenueEnrolled,noAbonChildren}, ...}
-        if (data.expensesByShift) setExpensesByShift(data.expensesByShift); // {1:{item:сумма},...}
+        // объединяем с прежним fact, чтобы сохранить revenueEnrolled/noAbonChildren из медленной загрузки
+        setFact((prev) => {
+          const merged = {};
+          SHIFTS.forEach((sh) => {
+            merged[sh] = { ...prev[sh], ...data.shifts[sh] };
+          });
+          return merged;
+        });
+        if (data.expensesByShift) setExpensesByShift(data.expensesByShift);
         setLastSync(new Date(data.updatedAt));
       } else {
         alert("CRM вернула ошибку: " + (data.error || "неизвестно"));
       }
     } catch (e) {
-      alert("Не удалось получить данные из CRM.\n\n" +
-        "Проверьте: в Apps Script деплой настроен как Web app с доступом " +
-        "«Anyone» (Anyone with the link). Если открыть URL деплоя в браузере " +
-        "напрямую отдаёт JSON, а тут ошибка — это ограничение браузера (CORS).\n\n" +
-        "Техническая деталь: " + e);
+      alert("Не удалось получить данные из CRM.\n\nТехническая деталь: " + e);
     }
     setSyncing(false);
   };
 
-  // --- автозагрузка из CRM при открытии дашборда ---
+  // медленная загрузка: только выручка по абонементам (может занять несколько минут)
+  const refreshAbonements = async () => {
+    setSyncingAbon(true);
+    try {
+      const r = await fetch(APPS_SCRIPT_URL + "?action=abon");
+      const data = await r.json();
+      if (data.ok && data.shifts) {
+        setFact((prev) => {
+          const merged = {};
+          SHIFTS.forEach((sh) => {
+            merged[sh] = { ...prev[sh], ...data.shifts[sh] };
+          });
+          return merged;
+        });
+        setLastSyncAbon(new Date(data.updatedAt));
+      } else {
+        alert("Не удалось пересчитать выручку: " + (data.error || "неизвестно"));
+      }
+    } catch (e) {
+      alert("Не удалось пересчитать выручку по абонементам.\n\nЕсли запрос длился >6 мин — " +
+        "это превышение лимита Apps Script. Попробуйте позже.\n\nДеталь: " + e);
+    }
+    setSyncingAbon(false);
+  };
+
+  // --- автозагрузка только быстрых данных при открытии дашборда ---
   useEffect(() => { refreshCRM(); }, []);
 
   const sharesSum = shares.early + shares.normal + shares.full;
@@ -507,7 +537,9 @@ function CampModel() {
             <div style={s.planHint}>
               Прогноз прибыли при <b>текущем наборе из CRM</b>: выручка = реальные абонементы вписанных
               детей (цена тарифа × дни смены) + дети без летнего абонемента × {BYN(params.pricePerDayNoAbon)} × дни.
-              Расходы на детях (питание) — от фактического числа. Кнопка «Обновить из CRM» обновляет данные.
+              Расходы на детях (питание) — от фактического числа. Кнопка «↻ Обновить факт» обновляет число
+              детей и оплаты быстро (~15 сек); «↻ Выручка по абонементам» пересчитывает выручку из реальных
+              тарифов (медленно, до 5 мин — нажимайте редко).
             </div>
             <div style={s.scroll}>
               <table style={s.ptable}>
@@ -742,14 +774,23 @@ function CampModel() {
               <h2 style={s.h2}>Факт из AlfaCRM</h2>
               <div style={s.sub}>
                 {syncing ? "загрузка из CRM…"
-                  : lastSync ? "обновлено: " + lastSync.toLocaleTimeString("ru-RU")
-                  : "нет данных — нажмите «Обновить»"}
+                  : lastSync ? "Факт обновлён: " + lastSync.toLocaleTimeString("ru-RU")
+                  : "нет данных — нажмите «Обновить факт»"}
+                {lastSyncAbon && <span style={{ marginLeft: 12 }}>· Выручка по абонементам: {lastSyncAbon.toLocaleTimeString("ru-RU")}</span>}
               </div>
             </div>
-            <button onClick={refreshCRM} disabled={syncing}
-              style={{ ...s.refresh, ...(syncing ? { opacity: 0.6, cursor: "wait" } : {}) }}>
-              {syncing ? "Обновляю…" : "↻ Обновить из CRM"}
-            </button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button onClick={refreshCRM} disabled={syncing || syncingAbon}
+                style={{ ...s.refresh, ...((syncing || syncingAbon) ? { opacity: 0.6, cursor: "wait" } : {}) }}
+                title="Дети, оплаты, расходы (быстро, ~15 сек)">
+                {syncing ? "Обновляю…" : "↻ Обновить факт"}
+              </button>
+              <button onClick={refreshAbonements} disabled={syncing || syncingAbon}
+                style={{ ...s.refreshAlt, ...((syncing || syncingAbon) ? { opacity: 0.6, cursor: "wait" } : {}) }}
+                title="Пересчёт выручки по реальным абонементам (медленно, до 5 мин)">
+                {syncingAbon ? "Считаю выручку…" : "↻ Выручка по абонементам"}
+              </button>
+            </div>
           </div>
 
           <div style={s.factCards}>
@@ -1016,6 +1057,7 @@ const s = {
   totCell: { padding: "13px 8px", textAlign: "center", fontWeight: 700, fontSize: 14.5, background: INK, color: "#fff", fontVariantNumeric: "tabular-nums", borderLeft: "1px solid #3d3833" },
   factHead: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 14, marginBottom: 18 },
   refresh: { padding: "12px 22px", fontSize: 15, fontWeight: 600, border: "none", borderRadius: 10, background: ACCENT, color: "#fff", cursor: "pointer", fontFamily: "system-ui,sans-serif", boxShadow: "0 2px 8px rgba(217,108,63,.35)" },
+  refreshAlt: { padding: "12px 22px", fontSize: 15, fontWeight: 600, borderRadius: 10, background: "transparent", color: ACCENT, cursor: "pointer", fontFamily: "system-ui,sans-serif", border: "1.5px solid " + ACCENT },
   factCards: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginBottom: 20 },
   factCard: { background: "#f8f3ea", border: `1px solid ${LINE}`, borderRadius: 12, padding: "16px 18px" },
   factCardWarn: { background: "#fcefe9", borderColor: "#f0c4b0" },
