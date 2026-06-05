@@ -31,7 +31,7 @@ const SHIFTS = [1, 2, 3, 4, 5, 6];
 const KIDS_PER_SQUAD = 10; // 10 детей = 1 отряд = 1 вожатый
 
 // --- наполняемость по сменам (1 и 6 по 40, остальные по 60) ---
-const DEFAULT_CAPACITY = { 1: 40, 2: 60, 3: 60, 4: 60, 5: 60, 6: 40 };
+const DEFAULT_CAPACITY = { 1: 40, 2: 60, 3: 60, 4: 60, 5: 60, 6: 50 };
 const DEFAULT_DAYS = { 1: 10, 2: 10, 3: 9, 4: 10, 5: 10, 6: 10 };
 
 // --- цены и доли (3 категории внутри смены) ---
@@ -53,9 +53,9 @@ const DEFAULT_ROLES = [
   { id: "c4", name: "Вожатый 4", type: "dayToggle", group: "couns", rate: fill(80), active: { ...allOn } },
   { id: "c5", name: "Вожатый 5", type: "dayToggle", group: "couns", rate: fill(40), active: { ...big } },
   { id: "c6", name: "Вожатый 6", type: "dayToggle", group: "couns", rate: fill(40), active: { ...big } },
-  { id: "ped1",  name: "Педагог 1",     type: "day", qty: 1, group: "team", rate: fill(40), pedagog: true },
-  { id: "ped2",  name: "Педагог 2",     type: "day", qty: 1, group: "team", rate: fill(40), pedagog: true },
-  { id: "ped3",  name: "Педагог 3",     type: "day", qty: 1, group: "team", rate: fill(40), pedagog: true },
+  { id: "ped1",  name: "Педагог 1",     type: "day", qty: 1, group: "team", rate: fill(90), pedagog: true },
+  { id: "ped2",  name: "Педагог 2",     type: "day", qty: 1, group: "team", rate: fill(90), pedagog: true },
+  { id: "ped3",  name: "Педагог 3",     type: "day", qty: 1, group: "team", rate: fill(90), pedagog: true },
   { id: "video", name: "Видеооператор", type: "fixed", qty: 1, group: "budget", rate: fill(900) },
   { id: "buh",   name: "Бухгалтер",     type: "fixed", qty: 1, group: "budget", rate: fill(1000) },
   { id: "smm",   name: "СММ",           type: "fixed", qty: 1, group: "budget", rate: fill(750) },
@@ -68,14 +68,14 @@ function fill(v) { return { 1: v, 2: v, 3: v, 4: v, 5: v, 6: v }; }
 
 // --- прочие параметры (общие) ---
 const DEFAULT_PARAMS = {
-  cateringPerDayPerChild: 14, // руб/день × (дети+вожатые+админ) × дни смены
+  cateringPerDayPerChild: 15, // руб/день × (дети+вожатые+админ) × дни смены
   householdPct: 0.05,         // бытовые, % от выручки (подтверждено)
   clubInvestPct: 0.02,        // вложения в клуб, % от выручки
   internetAdsPerShift: 700,   // реклама, фикс/смена
-  // постоянные расходы (фикс/смена) — зафиксированы по факту на старте
-  rent: 4000, utilities: 800, credit: 2000, internet: 200,
+  // постоянные расходы (фикс/смена) — зафиксированы по факту
+  rent: 1800, utilities: 400, credit: 1500, internet: 200,
   mobile: 125, services: 700, mandatoryStaff: 1500,
-  usnPct: 0.06,               // УСН РБ 2026 = 6% от валовой выручки (сверьте с бухгалтером)
+  usnPct: 0.04,               // УСН РБ 2026 — льготная ставка для вашей системы (сверьте с бухгалтером)
   amortization: 0,
   fillPrice: 980,             // цена добора ещё не собранных мест (прогноз)
   pricePerDayNoAbon: 100,     // цена/день для ребёнка без абонемента в CRM
@@ -661,7 +661,7 @@ function CampModel() {
             <div style={s.subSmall}>× (дети + вожатые на смене + админ) × дни смены</div>
             <Field label="Бытовые, % выручки" value={params.householdPct} onChange={(v) => setP("householdPct", v)} step={0.005} />
             <Field label="Вложения в клуб, % выручки" value={params.clubInvestPct} onChange={(v) => setP("clubInvestPct", v)} step={0.005} />
-            <Field label="Реклама/смена" value={params.internetAdsPerShift} onChange={(v) => setP("internetAdsPerShift", v)} suffix="р" check />
+            <Field label="Реклама/смена" value={params.internetAdsPerShift} onChange={(v) => setP("internetAdsPerShift", v)} suffix="р" />
             <Field label="УСН, % выручки" value={params.usnPct} onChange={(v) => setP("usnPct", v)} step={0.005} />
             <div style={s.divider} />
             <div style={s.tag}>постоянные, фикс/смена</div>
