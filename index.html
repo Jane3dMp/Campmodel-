@@ -904,13 +904,13 @@ function CampModel() {
                         : null;
                       if (planVal != null) planTot += planVal;
                       if (factVal != null) factTot += factVal;
-                      const diff = (planVal != null && factVal != null) ? factVal - planVal : null;
+                      const diff = (planVal != null && factVal != null) ? planVal - factVal : null;
                       return (
                         <tr key={row.itemId} className="prow">
                           <td style={s.ptdLeft}>{row.name}</td>
                           <td style={s.ptd}>{planVal != null ? BYN(planVal) : "—"}</td>
                           <td style={s.ptd}>{factVal != null ? BYN(factVal) : "—"}</td>
-                          <td style={{ ...s.ptd, color: diff == null ? "#9a9088" : diff > 0 ? "#c0392b" : "#3a7d44" }}>
+                          <td style={{ ...s.ptd, color: diff == null ? "#9a9088" : diff < 0 ? "#c0392b" : "#3a7d44" }}>
                             {diff != null ? (diff > 0 ? "+" : "") + BYN(diff) : "—"}
                           </td>
                         </tr>
@@ -921,7 +921,9 @@ function CampModel() {
                         <td style={s.totLabel}>Итого расходов</td>
                         <td style={s.totCell}>{BYN(planTot)}</td>
                         <td style={s.totCell}>{factShift ? BYN(factTot) : "—"}</td>
-                        <td style={s.totCell}>{factShift ? (factTot - planTot > 0 ? "+" : "") + BYN(factTot - planTot) : "—"}</td>
+                        <td style={{ ...s.totCell, color: !factShift ? undefined : (planTot - factTot) < 0 ? "#ffb3a3" : "#7be3a0" }}>
+                          {factShift ? (planTot - factTot > 0 ? "+" : "") + BYN(planTot - factTot) : "—"}
+                        </td>
                       </tr>
                     );
                     return rows;
@@ -931,8 +933,8 @@ function CampModel() {
             </div>
             <div style={s.note}>
               План — расходы этой смены из модели. Факт — расходы из AlfaCRM, внесённые в даты смены
-              (смена {expShift}: {SHIFT_DATE_LABEL[expShift]}). Разница красная — потрачено больше плана,
-              зелёная — меньше. Постоянные расходы (аренда, кредит) попадают в ту смену, в чьи даты прошёл платёж.
+              (смена {expShift}: {SHIFT_DATE_LABEL[expShift]}). Разница = план − факт: «+» зелёным — экономия,
+              «−» красным — перерасход. Постоянные расходы (аренда, кредит) попадают в ту смену, в чьи даты прошёл платёж.
             </div>
           </div>
         </section>
