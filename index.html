@@ -15,7 +15,7 @@
 <body>
 <div id="root"></div>
 <script type="text/babel" data-presets="react">
-const { useState, useMemo, useEffect } = React;
+const { useState, useMemo, useEffect, useRef } = React;
 
 
 // ============================================================
@@ -145,6 +145,13 @@ const EXPENSE_MAP = [
 const PCT = (n) => (n * 100).toFixed(1) + "%";
 const squads = (kids) => Math.ceil(kids / KIDS_PER_SQUAD);
 
+// сумма ВСЕХ фактических расходов смены из CRM (по всем статьям, включая налог,
+// комиссию банка и «без статьи»). expShiftData = expensesByShift[смена] либо null.
+function factExpensesTotal(expShiftData) {
+  if (!expShiftData) return null;
+  return Object.values(expShiftData).reduce((s, v) => s + (Number(v) || 0), 0);
+}
+
 // число людей в роли для смены
 function roleQty(role) {
   return role.qty || 0;
@@ -263,6 +270,7 @@ function CampModel() {
   const [syncingAbon, setSyncingAbon] = useState(false);
   const [editCell, setEditCell] = useState(null);
   const [restored, setRestored] = useState(false);
+  const readyToSave = useRef(false); // защёлка: true только после восстановления черновика
   const [expShift, setExpShift] = useState(1); // выбранная смена для блока расходов
   const [hideProfit, setHideProfit] = useState(false); // скрыть сумму чистой прибыли
 
@@ -288,10 +296,15 @@ function CampModel() {
         setRestored(true);
       }
     } catch (e) { /* битый черновик — игнорируем, останутся значения по умолчанию */ }
+    // защёлка: разрешаем автосохранение ТОЛЬКО после того, как восстановление
+    // черновика отработало. Иначе второй useEffect успевает затереть черновик
+    // дефолтами раньше, чем применится setRoles (гонка эффектов при старте).
+    readyToSave.current = true;
   }, []);
 
   // --- автосохранение черновика при любом изменении ---
   useEffect(() => {
+    if (!readyToSave.current) return; // не сохраняем, пока не восстановили черновик
     try {
       localStorage.setItem("finmodel_draft",
         JSON.stringify({ capacity, prices, shares, roles, params, savedAt: Date.now() }));
@@ -829,6 +842,73 @@ function CampModel() {
             <FactCard num={BYN(factT.forecast)} cap="прогноз (если соберём всех)" warn />
           </div>
 
+          {/* ===== РЕЗУЛЬТАТ СМЕНЫ: ФАКТ vs ПЛАН ===== */}
+          {(() => {
+            const a = perShiftActual.find((x) => x.shift === expShift) || perShiftActual[0];
+            const factExp = factExpensesTotal(expensesByShift ? expensesByShift[expShift] : null);
+            const haveFact = factExp != null;
+            // ФАКТ: реальный доход из CRM − реальные расходы из CRM (налог уже внутри статьи 15)
+            const factRevenue = a.revenue;
+            const factProfit = haveFact ? factRevenue - factExp : null;
+            // ПЛАН: прибыль из модели при текущем наборе (доход реальный, расходы плановые)
+            const planProfit = a.netProfit;
+            const deviation = haveFact ? factProfit - planProfit : null;
+            const col = (v) => (v >= 0 ? "#3a7d44" : "#c0392b");
+            return (
+              <div style={{ marginBottom: 22 }}>
+                <h2 style={s.h2}>Результат смены {expShift}</h2>
+                <div style={s.sub}>
+                  выберите смену кнопками ниже · факт берётся из CRM, план — из модели
+                </div>
+                <div style={s.resultCards}>
+                  <div style={s.resCard}>
+                    <div style={s.resCap}>ФАКТ (из CRM)</div>
+                    <div style={s.resRow}><span>Доход</span><span>{BYN(factRevenue)}</span></div>
+                    <div style={s.resRow}><span>Расходы</span><span>{haveFact ? "−" + BYN(factExp) : "—"}</span></div>
+                    <div style={{ ...s.resTotal, color: haveFact ? col(factProfit) : "#9a9088" }}>
+                      <span>Прибыль факт</span>
+                      <span>{haveFact ? BYN(factProfit) : "нет данных"}</span>
+                    </div>
+                  </div>
+                  <div style={s.resCard}>
+                    <div style={s.resCap}>ПЛАН (модель)</div>
+                    <div style={s.resRow}><span>Доход</span><span>{BYN(a.revenue)}</span></div>
+                    <div style={s.resRow}><span>Расходы</span><span>−{BYN(a.revenue - planProfit)}</span></div>
+                    <div style={{ ...s.resTotal, color: col(planProfit) }}>
+                      <span>Прибыль план</span>
+                      <span>{BYN(planProfit)}</span>
+                    </div>
+                  </div>
+                  <div style={{ ...s.resCard, ...s.resCardAccent }}>
+                    <div style={s.resCap}>ОТКЛОНЕНИЕ факт − план</div>
+                    <div style={{ ...s.resBig, color: haveFact ? col(deviation) : "#9a9088" }}>
+                      {haveFact ? (deviation > 0 ? "+" : "") + BYN(deviation) : "—"}
+                    </div>
+                    <div style={s.resHint}>
+                      {haveFact
+                        ? (deviation >= 0 ? "лучше плана" : "хуже плана")
+                        : "появится, когда в CRM будут расходы смены"}
+                    </div>
+                  </div>
+                </div>
+                <div style={s.note}>
+                  ФАКТ — реальный доход из CRM минус реальные расходы из CRM (налог уже учтён в расходах).
+                  ПЛАН — прибыль из модели при текущем числе детей (доход реальный, расходы расчётные).
+                  Отклонение «+» зелёным — заработали больше плана, «−» красным — меньше.
+                </div>
+              </div>
+            );
+          })()}
+
+          <div style={s.shiftTabs}>
+            {SHIFTS.map((sh) => (
+              <button key={sh} onClick={() => setExpShift(sh)}
+                style={{ ...s.shiftTab, ...(expShift === sh ? s.shiftTabOn : {}) }}>
+                Смена {sh}
+              </button>
+            ))}
+          </div>
+
           <div style={s.scroll}>
             <table style={s.ptable}>
               <thead><tr>
@@ -878,14 +958,6 @@ function CampModel() {
               {expensesByShift
                 ? "факт из AlfaCRM по датам внесения этой смены"
                 : "факт появится, когда в CRM будут расходы (пока сезон не начался)"}
-            </div>
-            <div style={s.shiftTabs}>
-              {SHIFTS.map((sh) => (
-                <button key={sh} onClick={() => setExpShift(sh)}
-                  style={{ ...s.shiftTab, ...(expShift === sh ? s.shiftTabOn : {}) }}>
-                  Смена {sh}
-                </button>
-              ))}
             </div>
             <div style={s.scroll}>
               <table style={s.ptable}>
@@ -1068,6 +1140,14 @@ const s = {
   gaugePct: { fontSize: 14, fontWeight: 700, fontFamily: "system-ui,sans-serif" },
   gaugeLabel: { fontSize: 12.5, color: "#8a8178", fontFamily: "system-ui,sans-serif", marginTop: 2 },
   shiftTabs: { display: "flex", flexWrap: "wrap", gap: 6, margin: "12px 0" },
+  resultCards: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12, margin: "14px 0" },
+  resCard: { background: "#f8f3ea", border: `1px solid ${LINE}`, borderRadius: 12, padding: "16px 18px" },
+  resCardAccent: { background: "#fffdf9", borderColor: ACCENT, display: "flex", flexDirection: "column", justifyContent: "center" },
+  resCap: { fontSize: 11, letterSpacing: 1, textTransform: "uppercase", color: ACCENT, fontWeight: 700, fontFamily: "system-ui,sans-serif", marginBottom: 10 },
+  resRow: { display: "flex", justifyContent: "space-between", fontSize: 14, color: "#6a625a", fontFamily: "system-ui,sans-serif", padding: "3px 0", fontVariantNumeric: "tabular-nums" },
+  resTotal: { display: "flex", justifyContent: "space-between", fontSize: 16, fontWeight: 700, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${LINE}`, fontVariantNumeric: "tabular-nums" },
+  resBig: { fontSize: 30, fontWeight: 700, fontVariantNumeric: "tabular-nums", margin: "4px 0" },
+  resHint: { fontSize: 12, color: "#8a8178", fontFamily: "system-ui,sans-serif" },
   shiftTab: { padding: "6px 14px", fontSize: 13, border: `1.5px solid ${LINE}`, borderRadius: 8, background: "transparent", color: "#6a625a", cursor: "pointer", fontFamily: "system-ui,sans-serif", fontWeight: 600 },
   shiftTabOn: { background: ACCENT, color: "#fff", borderColor: ACCENT },
   groupRow: { padding: "9px 14px", fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", color: ACCENT, fontWeight: 700, fontFamily: "system-ui,sans-serif", background: "#faf5ec", borderBottom: `1px solid ${LINE}` },
