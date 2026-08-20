@@ -293,6 +293,17 @@ function CampModel() {
           setRoles(merged);
         }
         if (d.params) setParams({ ...DEFAULT_PARAMS, ...d.params });
+        // оборот по абонементам из прошлого медленного пересчёта — чтобы не жать
+        // 5-минутную кнопку после каждой перезагрузки страницы; быстрая загрузка
+        // из CRM при старте перезапишет только children/cash/erip и сохранит его
+        if (d.fact) {
+          setFact(() => {
+            const merged = {};
+            SHIFTS.forEach((sh) => { merged[sh] = { ...EMPTY_FACT[sh], ...d.fact[sh] }; });
+            return merged;
+          });
+        }
+        if (d.lastSyncAbon) setLastSyncAbon(new Date(d.lastSyncAbon));
         setRestored(true);
       }
     } catch (e) { /* битый черновик — игнорируем, останутся значения по умолчанию */ }
@@ -307,9 +318,10 @@ function CampModel() {
     if (!readyToSave.current) return; // не сохраняем, пока не восстановили черновик
     try {
       localStorage.setItem("finmodel_draft",
-        JSON.stringify({ capacity, prices, shares, roles, params, savedAt: Date.now() }));
+        JSON.stringify({ capacity, prices, shares, roles, params, fact,
+          lastSyncAbon: lastSyncAbon ? lastSyncAbon.getTime() : null, savedAt: Date.now() }));
     } catch (e) { /* приватный режим / переполнение — тихо пропускаем */ }
-  }, [capacity, prices, shares, roles, params]);
+  }, [capacity, prices, shares, roles, params, fact, lastSyncAbon]);
 
   const stAll = { capacity, days, prices, shares, roles, params };
 
@@ -463,8 +475,11 @@ function CampModel() {
   const factT = SHIFTS.reduce((a, s) => ({
     children: a.children + fact[s].children, cash: a.cash + fact[s].cash,
     erip: a.erip + fact[s].erip, forecast: a.forecast + forecastOf(s),
-  }), { children: 0, cash: 0, erip: 0, forecast: 0 });
+    oborot: a.oborot + (fact[s].revenueEnrolled || 0),
+  }), { children: 0, cash: 0, erip: 0, forecast: 0, oborot: 0 });
   const collected = factT.cash + factT.erip;
+  // оборот уже загружали (кнопкой или из черновика) — можно показывать колонки оборота
+  const haveOborot = lastSyncAbon != null || factT.oborot > 0;
 
   return (
     <div style={s.app}>
@@ -836,6 +851,8 @@ function CampModel() {
 
           <div style={s.factCards}>
             <FactCard num={factT.children} cap="детей вписано" />
+            <FactCard num={haveOborot ? BYN(factT.oborot) : "—"}
+              cap={haveOborot ? "оборот по абонементам" : "оборот — нажмите «Выручка по абонементам»"} />
             <FactCard num={BYN(collected)} cap="внесено всего" />
             <FactCard num={BYN(factT.cash)} cap="наличными" />
             <FactCard num={BYN(factT.erip)} cap="через ЕРИП" />
@@ -912,7 +929,7 @@ function CampModel() {
           <div style={s.scroll}>
             <table style={s.ptable}>
               <thead><tr>
-                {["Смена", "Вписано / план", "Нал", "ЕРИП", "Внесено", "Прогноз", "Осталось внести"].map((h) => (
+                {["Смена", "Вписано / план", "Оборот (абонементы)", "Внесено (нал + ЕРИП)", "Оборот − внесено", "Прогноз"].map((h) => (
                   <th key={h} style={{ ...s.pth, ...(h === "Смена" ? s.pthLeft : {}) }}>{h}</th>
                 ))}
               </tr></thead>
@@ -920,35 +937,44 @@ function CampModel() {
                 {SHIFTS.map((sh) => {
                   const f = fact[sh]; const got = f.cash + f.erip;
                   const forecast = forecastOf(sh);
+                  const ob = f.revenueEnrolled || 0;
+                  const debt = ob - got; // >0 — родители ещё должны, <0 — внесено сверх абонементов
                   return (
                     <tr key={sh} className="prow">
                       <td style={s.ptdLeft}>Смена {sh}</td>
                       <td style={s.ptd}>{f.children} / {capacity[sh]}</td>
-                      <td style={s.ptd}>{BYN(f.cash)}</td>
-                      <td style={s.ptd}>{BYN(f.erip)}</td>
+                      <td style={{ ...s.ptd, fontWeight: 600 }}>{haveOborot ? BYN(ob) : "—"}</td>
                       <td style={s.ptd}>{BYN(got)}</td>
+                      <td style={{ ...s.ptd, color: !haveOborot ? "#9a9088" : debt > 0 ? "#c0392b" : "#3a7d44" }}>
+                        {haveOborot ? (debt > 0 ? "+" : "") + BYN(debt) : "—"}
+                      </td>
                       <td style={s.ptd}>{BYN(forecast)}</td>
-                      <td style={{ ...s.ptd, color: "#c0392b" }}>{BYN(forecast - got)}</td>
                     </tr>
                   );
                 })}
                 <tr>
                   <td style={s.totLabel}>Итого</td>
                   <td style={s.totCell}>{factT.children} / {SHIFTS.reduce((a, sh) => a + capacity[sh], 0)}</td>
-                  <td style={s.totCell}>{BYN(factT.cash)}</td>
-                  <td style={s.totCell}>{BYN(factT.erip)}</td>
+                  <td style={s.totCell}>{haveOborot ? BYN(factT.oborot) : "—"}</td>
                   <td style={s.totCell}>{BYN(collected)}</td>
+                  <td style={{ ...s.totCell, color: !haveOborot ? undefined : (factT.oborot - collected) > 0 ? "#ffb3a3" : "#7be3a0" }}>
+                    {haveOborot ? ((factT.oborot - collected) > 0 ? "+" : "") + BYN(factT.oborot - collected) : "—"}
+                  </td>
                   <td style={s.totCell}>{BYN(factT.forecast)}</td>
-                  <td style={s.totCell}>{BYN(factT.forecast - collected)}</td>
                 </tr>
               </tbody>
             </table>
           </div>
           <div style={s.note}>
-            «Прогноз» = вписанные дети × средняя цена {BYN(avgPrice)} (по долям категорий)
-            + недобор мест (план − вписанные) × цена добора {BYN(params.fillPrice)}.
-            То есть уже зашедшие идут по обычной цене, а ещё не собранных считаем дороже.
-            Цены, доли, набор и цену добора меняете во вкладке «Параметры». Факт — из AlfaCRM по кнопке.
+            <b>Оборот</b> — стоимость летних абонементов вписанных детей (реальный тариф × дни смены)
+            из CRM, обновляется кнопкой «↻ Выручка по абонементам» и сохраняется в черновике —
+            после перезагрузки страницы жать заново не нужно. <b>Внесено</b> — деньги, реально
+            зашедшие в кассу (нал + ЕРИП); сюда попадают и оплаты сверх абонемента (посуточные
+            {" "}{BYN(params.pricePerDayNoAbon)}/день, доплаты), поэтому с оборотом оно совпадать
+            не обязано. <b>Оборот − внесено</b>: «+» красным — родители ещё должны, «−» зелёным —
+            внесено больше стоимости абонементов. <b>Прогноз</b> = вписанные × средняя цена модели
+            {" "}{BYN(avgPrice)} + недобор мест × цена добора {BYN(params.fillPrice)} — сравнивайте
+            его с оборотом, а не с внесённым.
           </div>
 
           {/* ===== РАСХОДЫ ПО СМЕНЕ: ПЛАН / ФАКТ ===== */}
