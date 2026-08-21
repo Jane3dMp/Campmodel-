@@ -121,6 +121,32 @@ function remainingDaysOfShift(shift, fullDays) {
   return Math.max(0, Math.round(fullDays * (remainCal / totalCal)));
 }
 
+// ============================================================
+// ЦЕНЫ ФАКТ (сезон 2026 завершён): по какой цене купили каникулы.
+// Источник: летние абонементы детей из AlfaCRM (customer-tariff,
+// матчинг на смену по датам — та же логика, что в админке лагеря),
+// состав детей смены — из админки camp-generator.
+// Оборот = дневной тариф × оплачиваемые дни РЕБЁНКА (неполные — частично).
+// ============================================================
+const PRICE_FACT = {
+  updatedAt: "21.08.2026",
+  tiers: [
+    { key: "t100",   label: "100 р/день — полная",      color: "#d96c3f", txt: "#fff" },
+    { key: "t90",    label: "90 р/день — обычная",      color: "#d99b3f", txt: "#fff" },
+    { key: "t85",    label: "85 р/день — раннее",       color: "#8fbf99", txt: "#fff" },
+    { key: "other",  label: "другие тарифы (скидки)",   color: "#b5aca2", txt: "#fff" },
+    { key: "noAbon", label: "без летнего абонемента",   color: "#e9e2d5", txt: "#6a625a" },
+  ],
+  shifts: {
+    1: { t100: 0,  t90: 10, t85: 27, other: 1, noAbon: 1, kids: 38, oborot: 32650, avg: 859, partial: 0 },
+    2: { t100: 7,  t90: 17, t85: 34, other: 3, noAbon: 0, kids: 61, oborot: 51620, avg: 846, partial: 3 },
+    3: { t100: 11, t90: 17, t85: 36, other: 1, noAbon: 0, kids: 65, oborot: 51415, avg: 791, partial: 1 },
+    4: { t100: 16, t90: 12, t85: 34, other: 0, noAbon: 2, kids: 62, oborot: 54875, avg: 885, partial: 3 },
+    5: { t100: 22, t90: 7,  t85: 25, other: 2, noAbon: 0, kids: 56, oborot: 49100, avg: 877, partial: 4 },
+    6: { t100: 31, t90: 8,  t85: 11, other: 1, noAbon: 0, kids: 51, oborot: 45050, avg: 883, partial: 8 },
+  },
+};
+
 // карта: id статьи расхода в CRM → название и плановое значение для ОДНОЙ смены
 // p — расчёт смены (perShift), m — помесячные параметры (params)
 // factItems — если факт собирается из нескольких статей CRM; plan: ()=>null — факт без плана
@@ -513,7 +539,7 @@ function CampModel() {
       </header>
 
       <nav style={s.tabs}>
-        {[["plan", "План по сменам"], ["params", "Параметры"], ["payroll", "ЗП"], ["fact", "План vs Факт"]]
+        {[["plan", "План по сменам"], ["params", "Параметры"], ["payroll", "ЗП"], ["fact", "План vs Факт"], ["prices", "Цены"]]
           .map(([id, l]) => (
           <button key={id} onClick={() => setTab(id)}
             style={{ ...s.tab, ...(tab === id ? s.tabActive : {}) }}>{l}</button>
@@ -1039,6 +1065,132 @@ function CampModel() {
           </div>
         </section>
       )}
+
+      {/* ===== ЦЕНЫ: ПО КАКОЙ ЦЕНЕ КУПИЛИ КАНИКУЛЫ ===== */}
+      {tab === "prices" && (() => {
+        const PF = PRICE_FACT;
+        const season = SHIFTS.reduce((a, sh) => {
+          const d = PF.shifts[sh];
+          PF.tiers.forEach((t) => { a[t.key] = (a[t.key] || 0) + (d[t.key] || 0); });
+          a.kids += d.kids; a.oborot += d.oborot; a.partial += d.partial;
+          return a;
+        }, { kids: 0, oborot: 0, partial: 0 });
+        const seasonAvg = season.kids ? Math.round(season.oborot / season.kids) : 0;
+        return (
+          <section style={s.card}>
+            <h2 style={s.h2}>По какой цене купили каникулы</h2>
+            <div style={s.sub}>
+              сколько детей на каждом дневном тарифе летнего абонемента ·
+              выгрузка из AlfaCRM {PF.updatedAt} · сезон завершён, данные финальные
+            </div>
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 14, margin: "4px 0 16px",
+              fontFamily: "system-ui,sans-serif", fontSize: 12.5, color: "#6a625a" }}>
+              {PF.tiers.map((t) => (
+                <span key={t.key} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ width: 11, height: 11, borderRadius: 3, background: t.color,
+                    display: "inline-block", border: "1px solid #d8d0c2" }} />
+                  {t.label}
+                </span>
+              ))}
+            </div>
+
+            <div style={{ display: "grid", gap: 8, marginBottom: 22 }}>
+              {SHIFTS.map((sh) => {
+                const d = PF.shifts[sh];
+                const totalKids = d.kids + d.noAbon;
+                const segs = PF.tiers.map((t) => ({ ...t, n: d[t.key] || 0 })).filter((x) => x.n > 0);
+                return (
+                  <div key={sh} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ width: 62, flexShrink: 0, fontSize: 12.5, color: "#8a8178",
+                      fontFamily: "system-ui,sans-serif" }}>Смена {sh}</span>
+                    <div style={{ display: "flex", flex: 1, height: 27, borderRadius: 7,
+                      overflow: "hidden", border: `1px solid ${LINE}` }}>
+                      {segs.map((x) => (
+                        <div key={x.key} title={x.label + ": " + x.n}
+                          style={{ width: (x.n / totalKids * 100) + "%", background: x.color,
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            fontSize: 11.5, color: x.txt, fontFamily: "system-ui,sans-serif",
+                            fontWeight: 600, minWidth: 15 }}>
+                          {x.n}
+                        </div>
+                      ))}
+                    </div>
+                    <span style={{ width: 52, flexShrink: 0, textAlign: "right", fontSize: 12.5,
+                      color: "#8a8178", fontFamily: "system-ui,sans-serif" }}>{totalKids} дет.</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={s.scroll}>
+              <table style={s.ptable}>
+                <thead>
+                  <tr>
+                    <th style={{ ...s.pth, ...s.pthLeft }}>Тариф</th>
+                    {SHIFTS.map((sh) => (
+                      <th key={sh} style={s.pth}>Смена {sh}
+                        <span style={s.pthCap}>{days[sh]} дн.</span></th>
+                    ))}
+                    <th style={{ ...s.pth, ...s.pthSeason }}>За сезон</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {PF.tiers.map((t) => (
+                    <tr key={t.key} className="prow">
+                      <td style={s.ptdLeft}>
+                        <span style={{ display: "inline-block", width: 9, height: 9, borderRadius: 2,
+                          background: t.color, marginRight: 8, border: "1px solid #d8d0c2" }} />
+                        {t.label}
+                      </td>
+                      {SHIFTS.map((sh) => {
+                        const n = PF.shifts[sh][t.key] || 0;
+                        return <td key={sh} style={{ ...s.ptd, color: n ? undefined : "#c9c1b6" }}>
+                          {n || "—"}</td>;
+                      })}
+                      <td style={{ ...s.ptd, ...s.ptdSeason }}>{season[t.key] || 0}</td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td style={s.totLabel}>Итого детей</td>
+                    {SHIFTS.map((sh) => {
+                      const d = PF.shifts[sh];
+                      return <td key={sh} style={s.totCell}>{d.kids + d.noAbon}</td>;
+                    })}
+                    <td style={s.totCell}>{season.kids + season.noAbon}</td>
+                  </tr>
+                  <tr className="prow">
+                    <td style={{ ...s.ptdLeft, fontWeight: 700 }}>Оборот по абонементам</td>
+                    {SHIFTS.map((sh) => (
+                      <td key={sh} style={{ ...s.ptd, fontWeight: 600 }}>
+                        {BYN(PF.shifts[sh].oborot)}</td>
+                    ))}
+                    <td style={{ ...s.ptd, ...s.ptdSeason }}>{BYN(season.oborot)}</td>
+                  </tr>
+                  <tr className="prow">
+                    <td style={s.ptdLeft}>Средний чек (с абонементом)</td>
+                    {SHIFTS.map((sh) => (
+                      <td key={sh} style={s.ptd}>{BYN(PF.shifts[sh].avg)}</td>
+                    ))}
+                    <td style={{ ...s.ptd, ...s.ptdSeason }}>{BYN(seasonAvg)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div style={s.note}>
+              Каждый ребёнок отнесён к <b>дневному тарифу его летнего абонемента</b> в AlfaCRM
+              (85 = раннее бронирование, 90 = обычная, 100 = полная цена; за 10-дневную смену
+              это 850 / 900 / 1000 р). «Другие тарифы» — индивидуальные цены и скидки
+              (0–80 р/день). Оборот здесь = тариф × оплачиваемые дни конкретного ребёнка:
+              {" "}{season.partial} детей ходили не всю смену, поэтому сумма немного ниже, чем
+              «оборот по абонементам» на вкладке «План vs Факт» (там смена считается целиком).
+              Хорошо видно, как от смены к смене растёт доля полной цены: 0 → 31 ребёнок —
+              раннее бронирование выкупали в начале сезона.
+            </div>
+          </section>
+        );
+      })()}
 
       <footer style={s.footer}>
         Прототип · «проверь» = подтвердить значение · сезон складывается из 6 разных смен
