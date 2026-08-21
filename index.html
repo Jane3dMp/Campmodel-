@@ -955,7 +955,7 @@ function CampModel() {
           <div style={s.scroll}>
             <table style={s.ptable}>
               <thead><tr>
-                {["Смена", "Вписано / план", "Оборот (абонементы)", "Внесено (нал + ЕРИП)", "Оборот − внесено", "Прогноз"].map((h) => (
+                {["Смена", "Вписано / план", "Оборот (абонементы)", "Внесено (нал + ЕРИП)*", "Прогноз"].map((h) => (
                   <th key={h} style={{ ...s.pth, ...(h === "Смена" ? s.pthLeft : {}) }}>{h}</th>
                 ))}
               </tr></thead>
@@ -964,16 +964,12 @@ function CampModel() {
                   const f = fact[sh]; const got = f.cash + f.erip;
                   const forecast = forecastOf(sh);
                   const ob = f.revenueEnrolled || 0;
-                  const debt = ob - got; // >0 — родители ещё должны, <0 — внесено сверх абонементов
                   return (
                     <tr key={sh} className="prow">
                       <td style={s.ptdLeft}>Смена {sh}</td>
                       <td style={s.ptd}>{f.children} / {capacity[sh]}</td>
                       <td style={{ ...s.ptd, fontWeight: 600 }}>{haveOborot ? BYN(ob) : "—"}</td>
                       <td style={s.ptd}>{BYN(got)}</td>
-                      <td style={{ ...s.ptd, color: !haveOborot ? "#9a9088" : debt > 0 ? "#c0392b" : "#3a7d44" }}>
-                        {haveOborot ? (debt > 0 ? "+" : "") + BYN(debt) : "—"}
-                      </td>
                       <td style={s.ptd}>{BYN(forecast)}</td>
                     </tr>
                   );
@@ -983,9 +979,6 @@ function CampModel() {
                   <td style={s.totCell}>{factT.children} / {SHIFTS.reduce((a, sh) => a + capacity[sh], 0)}</td>
                   <td style={s.totCell}>{haveOborot ? BYN(factT.oborot) : "—"}</td>
                   <td style={s.totCell}>{BYN(collected)}</td>
-                  <td style={{ ...s.totCell, color: !haveOborot ? undefined : (factT.oborot - collected) > 0 ? "#ffb3a3" : "#7be3a0" }}>
-                    {haveOborot ? ((factT.oborot - collected) > 0 ? "+" : "") + BYN(factT.oborot - collected) : "—"}
-                  </td>
                   <td style={s.totCell}>{BYN(factT.forecast)}</td>
                 </tr>
               </tbody>
@@ -994,13 +987,15 @@ function CampModel() {
           <div style={s.note}>
             <b>Оборот</b> — стоимость летних абонементов вписанных детей (реальный тариф × дни смены)
             из CRM, обновляется кнопкой «↻ Выручка по абонементам» и сохраняется в черновике —
-            после перезагрузки страницы жать заново не нужно. <b>Внесено</b> — деньги, реально
-            зашедшие в кассу (нал + ЕРИП); сюда попадают и оплаты сверх абонемента (посуточные
-            {" "}{BYN(params.pricePerDayNoAbon)}/день, доплаты), поэтому с оборотом оно совпадать
-            не обязано. <b>Оборот − внесено</b>: «+» красным — родители ещё должны, «−» зелёным —
-            внесено больше стоимости абонементов. <b>Прогноз</b> = вписанные × средняя цена модели
-            {" "}{BYN(avgPrice)} + недобор мест × цена добора {BYN(params.fillPrice)} — сравнивайте
-            его с оборотом, а не с внесённым.
+            после перезагрузки страницы жать заново не нужно. Это главная цифра смены — на неё и
+            ориентируйтесь. <b>*Внесено</b> — платежи, как их сейчас отдаёт серверная часть: ВСЕ
+            платежи каждого ребёнка смены в филиале «Каникулы» наличными и через ЕРИП, включая его
+            оплаты за другие смены; терминальные платежи не входят. Поэтому у детей из нескольких
+            смен деньги дублируются в каждой их смене, «за сезон» завышено, и сравнивать «внесено»
+            с оборотом напрямую нельзя (сверка сезона-2026: реально внесено 286 199 р ≈ начислено
+            {" "}283 842 р, долгов по абонементам нет). Лечится в серверном скрипте: фильтровать
+            платежи по абонементу смены и добавить счёт «Терминал». <b>Прогноз</b> = вписанные ×
+            средняя цена модели {BYN(avgPrice)} + недобор мест × цена добора {BYN(params.fillPrice)}.
           </div>
 
           {/* ===== РАСХОДЫ ПО СМЕНЕ: ПЛАН / ФАКТ ===== */}
